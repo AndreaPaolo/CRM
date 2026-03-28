@@ -22,10 +22,15 @@ class Appuntamento extends Model
         'descrizione',
         'numerazione',
         'google_calendar_event_id',
+        'google_calendar_event_id',
+        'calendar_sync_status',
+        'calendar_synced_at',
+        'calendar_last_error',
     ];
 
     protected $casts = [
         'data_ora' => 'datetime',
+        'calendar_synced_at' => 'datetime',
     ];
 
     public function cliente()
@@ -53,8 +58,8 @@ class Appuntamento extends Model
     protected static function booted(): void
     {
         static::creating(function (Appuntamento $appuntamento) {
-            if (! $appuntamento->user_id && Auth::check()) {
-                $appuntamento->user_id = Auth::id();
+            if (! $appuntamento->user_id && auth()->check()) {
+                $appuntamento->user_id = auth()->id();
             }
 
             if (! $appuntamento->numerazione && $appuntamento->abbonamento_id) {
@@ -62,6 +67,23 @@ class Appuntamento extends Model
                     ->max('numerazione');
 
                 $appuntamento->numerazione = ($ultimaNumerazione ?? 0) + 1;
+            }
+
+            $appuntamento->calendar_sync_status = 'dirty';
+            $appuntamento->calendar_last_error = null;
+        });
+
+        static::updating(function (Appuntamento $appuntamento) {
+            if ($appuntamento->isDirty([
+                'cliente_id',
+                'abbonamento_id',
+                'data_ora',
+                'durata',
+                'descrizione',
+                'numerazione',
+            ])) {
+                $appuntamento->calendar_sync_status = 'dirty';
+                $appuntamento->calendar_last_error = null;
             }
         });
 

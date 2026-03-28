@@ -3,10 +3,12 @@
 namespace App\Services;
 
 use App\Models\Appuntamento;
+use Carbon\Carbon;
 use Google\Client;
 use Google\Service\Calendar;
 use Google\Service\Calendar\Event;
 use Google\Service\Calendar\EventDateTime;
+use Throwable;
 
 class GoogleCalendarService
 {
@@ -19,10 +21,6 @@ class GoogleCalendarService
         $client->setApplicationName(config('app.name'));
         $client->setScopes([Calendar::CALENDAR]);
         $client->setAuthConfig(storage_path('app/credentials.json'));
-
-        // Se usi OAuth con token salvato
-        $client->setAccessType('offline');
-        $client->setPrompt('select_account consent');
 
         $tokenPath = storage_path('app/token.json');
         if (file_exists($tokenPath)) {
@@ -37,25 +35,21 @@ class GoogleCalendarService
     {
         $eventId = $this->buildEventId($appuntamento);
 
-        $start = new EventDateTime([
-            'dateTime' => $appuntamento->data_ora->format('c'),
-            'timeZone' => 'Europe/Rome',
-        ]);
-
-        $end = new EventDateTime([
-            'dateTime' => $appuntamento->data_ora->copy()->addMinutes($appuntamento->durata)->format('c'),
-            'timeZone' => 'Europe/Rome',
-        ]);
-
-        $summary = $this->buildSummary($appuntamento);
-        $description = $this->buildDescription($appuntamento);
+        $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
+        $endAt = $startAt->copy()->addMinutes($appuntamento->durata);
 
         $event = new Event([
             'id' => $eventId,
-            'summary' => $summary,
-            'description' => $description,
-            'start' => $start,
-            'end' => $end,
+            'summary' => $this->buildSummary($appuntamento),
+            'description' => $this->buildDescription($appuntamento),
+            'start' => new EventDateTime([
+                'dateTime' => $startAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ]),
+            'end' => new EventDateTime([
+                'dateTime' => $endAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ]),
             'extendedProperties' => [
                 'private' => [
                     'appuntamento_id' => (string) $appuntamento->id,
@@ -64,23 +58,26 @@ class GoogleCalendarService
         ]);
 
         try {
-            $this->calendar->events->get($this->calendarId, $eventId);
+            try {
+                $this->calendar->events->get($this->calendarId, $eventId);
+                $this->calendar->events->update($this->calendarId, $eventId, $event);
+            } catch (Throwable $e) {
+                $this->calendar->events->insert($this->calendarId, $event);
+            }
 
-            $this->calendar->events->update(
-                $this->calendarId,
-                $eventId,
-                $event
-            );
-        } catch (\Exception $e) {
-            $this->calendar->events->insert(
-                $this->calendarId,
-                $event
-            );
-        }
+            $appuntamento->forceFill([
+                'google_calendar_event_id' => $eventId,
+                'calendar_sync_status' => 'synced',
+                'calendar_synced_at' => now(),
+                'calendar_last_error' => null,
+            ])->saveQuietly();
+        } catch (Throwable $e) {
+            $appuntamento->forceFill([
+                'calendar_sync_status' => 'failed',
+                'calendar_last_error' => $e->getMessage(),
+            ])->saveQuietly();
 
-        if ($appuntamento->google_calendar_event_id !== $eventId) {
-            $appuntamento->google_calendar_event_id = $eventId;
-            $appuntamento->saveQuietly();
+            throw $e;
         }
     }
 
@@ -90,8 +87,8 @@ class GoogleCalendarService
 
         try {
             $this->calendar->events->delete($this->calendarId, $eventId);
-        } catch (\Exception $e) {
-            // niente: se non esiste già, evitiamo blocchi
+        } catch (Throwable $e) {
+            // opzionale: salva errore o ignora se evento non trovato
         }
     }
 
@@ -113,14 +110,12 @@ class GoogleCalendarService
 
     protected function buildDescription(Appuntamento $appuntamento): string
     {
-        $righe = [
+        return trim(implode("\n", [
             'APPUNTAMENTO_ID: ' . $appuntamento->id,
             'ABBONAMENTO_ID: ' . $appuntamento->abbonamento_id,
             '',
             (string) ($appuntamento->descrizione ?? ''),
-        ];
-
-        return trim(implode("\n", $righe));
+        ]));
     }
 
     protected function buildEventId(Appuntamento $appuntamento): string

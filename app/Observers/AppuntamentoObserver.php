@@ -9,17 +9,33 @@ class AppuntamentoObserver
 {
     public function created(Appuntamento $appuntamento): void
     {
-        app(GoogleCalendarService::class)->syncAppuntamento($appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt']));
+        try {
+            app(GoogleCalendarService::class)->syncAppuntamento(
+                $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+            );
+        } catch (Throwable $e) {
+            // stato già segnato come failed nel service
+        }
     }
 
     public function updated(Appuntamento $appuntamento): void
     {
-        app(GoogleCalendarService::class)->syncAppuntamento($appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt']));
+        try {
+            app(GoogleCalendarService::class)->syncAppuntamento(
+                $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+            );
+        } catch (Throwable $e) {
+            // stato già segnato come failed nel service
+        }
     }
 
     public function deleted(Appuntamento $appuntamento): void
     {
-        app(GoogleCalendarService::class)->deleteAppuntamento($appuntamento);
+        try {
+            app(GoogleCalendarService::class)->deleteAppuntamento($appuntamento);
+        } catch (Throwable $e) {
+            //
+        }
     }
 
     public function restored(Appuntamento $appuntamento): void
