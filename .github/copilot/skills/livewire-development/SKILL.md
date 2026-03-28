@@ -9,10 +9,7 @@ description: >-
 
 # Livewire Development
 
-
-
 ## When to Apply
-
 
 Activate this skill when:
 - Creating new Livewire components
@@ -22,36 +19,24 @@ Activate this skill when:
 - Adding Alpine.js interactivity to components
 - Working with wire: directives
 
-
 ## Documentation
-
 
 Use `search-docs` for detailed Livewire 3 patterns and documentation.
 
-
 ## Basic Usage
-
-
 
 ### Creating Components
 
-
 Use the `php artisan make:livewire [Posts\CreatePost]` Artisan command to create new components.
 
-
 ### Fundamental Concepts
-
 
 - State should live on the server, with the UI reflecting it.
 - All Livewire requests hit the Laravel backend; they're like regular HTTP requests. Always validate form data and run authorization checks in Livewire actions.
 
-
 ## Livewire 3 Specifics
 
-
-
 ### Key Changes From Livewire 2
-
 
 These things changed in Livewire 3, but may not have been updated in this application. Verify this application's setup to ensure you follow existing conventions.
 - Use `wire:model.live` for real-time updates, `wire:model` is now deferred by default.
@@ -59,30 +44,21 @@ These things changed in Livewire 3, but may not have been updated in this applic
 - Use `$this->dispatch()` to dispatch events (not `emit` or `dispatchBrowserEvent`).
 - Use the `components.layouts.app` view as the typical layout path (not `layouts.app`).
 
-
 ### New Directives
-
 
 - `wire:show`, `wire:transition`, `wire:cloak`, `wire:offline`, `wire:target` are available for use.
 
-
 ### Alpine Integration
-
 
 - Alpine is now included with Livewire; don't manually include Alpine.js.
 - Plugins included with Alpine: persist, intersect, collapse, and focus.
 
-
 ## Best Practices
-
-
 
 ### Component Structure
 
-
 - Livewire components require a single root element.
 - Use `wire:loading` and `wire:dirty` for delightful loading states.
-
 
 ### Using Keys in Loops
 
@@ -96,11 +72,7 @@ These things changed in Livewire 3, but may not have been updated in this applic
 
 </code-snippet>
 
-
-
-
 ### Lifecycle Hooks
-
 
 Prefer lifecycle hooks like `mount()`, `updatedFoo()` for initialization and reactive side effects:
 
@@ -111,11 +83,7 @@ public function updatedSearch() { $this->resetPage(); }
 
 </code-snippet>
 
-
-
-
 ## JavaScript Hooks
-
 
 You can listen for `livewire:init` to hook into Livewire initialization:
 
@@ -135,11 +103,7 @@ document.addEventListener('livewire:init', function () {
 
 </code-snippet>
 
-
-
-
 ## Testing
-
 
 <code-snippet name="Example Livewire Component Test" lang="php">
 
@@ -152,8 +116,6 @@ Livewire::test(Counter::class)
 
 </code-snippet>
 
-
-
 <code-snippet name="Testing Livewire Component Exists on Page" lang="php">
 
 $this->get('/posts/create')
@@ -161,11 +123,7 @@ $this->get('/posts/create')
 
 </code-snippet>
 
-
-
-
 ## Common Pitfalls
-
 
 - Forgetting `wire:key` in loops causes unexpected behavior when items change
 - Using `wire:model` expecting real-time updates (use `wire:model.live` instead in v3)

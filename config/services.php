@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'google' => [
+        'calendar_id' => env('GOOGLE_CALENDAR_ID'),
+    ],
+
 ];

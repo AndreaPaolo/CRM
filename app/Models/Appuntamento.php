@@ -21,6 +21,7 @@ class Appuntamento extends Model
         'durata',
         'descrizione',
         'numerazione',
+        'google_calendar_event_id',
     ];
 
     protected $casts = [
