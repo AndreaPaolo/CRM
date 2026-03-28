@@ -21,4 +21,8 @@ class Cliente extends Model
     public function abbonamenti(){
         return $this->hasMany(Abbonamento::class);
     }
+
+    public function appuntamenti(){
+        return $this->hasMany(Appuntamento::class);
+    }
 }

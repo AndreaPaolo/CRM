@@ -59,4 +59,8 @@ class Abbonamento extends Model
             }
         });
     }
+
+    public function appuntamenti(){
+        return $this->hasMany(Appuntamento::class);
+    }
 }
