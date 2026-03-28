@@ -53,6 +53,7 @@ class GoogleCalendarService
             'extendedProperties' => [
                 'private' => [
                     'appuntamento_id' => (string) $appuntamento->id,
+                    'crm_source' => 'crm',
                 ],
             ],
         ]);
@@ -110,11 +111,60 @@ class GoogleCalendarService
 
     protected function buildDescription(Appuntamento $appuntamento): string
     {
-        return (string) ($appuntamento->descrizione ?? '');
+        return $appuntamento->descrizione ?: 'Appuntamento CRM';
     }
 
     protected function buildEventId(Appuntamento $appuntamento): string
     {
         return 'app' . str_pad((string) $appuntamento->id, 10, '0', STR_PAD_LEFT);
+    }
+
+
+    public function deleteOrphanCalendarEvents(): int
+    {
+        $deleted = 0;
+        $pageToken = null;
+        $eventsToDelete = [];
+
+        do {
+            $events = $this->calendar->events->listEvents($this->calendarId, [
+                'maxResults' => 2500,
+                'pageToken' => $pageToken,
+                'singleEvents' => true,
+                'showDeleted' => false,
+            ]);
+
+            foreach ($events->getItems() as $event) {
+                $private = $event->getExtendedProperties()?->getPrivate() ?? [];
+                $appuntamentoId = $private['appuntamento_id'] ?? null;
+
+                if ($appuntamentoId) {
+                    $exists = \App\Models\Appuntamento::where('id', $appuntamentoId)->exists();
+
+                    if (! $exists) {
+                        $eventsToDelete[] = $event->getId();
+                    }
+
+                    continue;
+                }
+
+                // evento senza tag CRM: qui devi decidere la regola
+                // esempio: cancella tutto quello che NON è nel CRM
+                $eventsToDelete[] = $event->getId();
+            }
+
+            $pageToken = $events->getNextPageToken();
+        } while ($pageToken);
+
+        foreach ($eventsToDelete as $eventId) {
+            try {
+                $this->calendar->events->delete($this->calendarId, $eventId);
+                $deleted++;
+            } catch (\Throwable $e) {
+                //
+            }
+        }
+
+        return $deleted;
     }
 }
