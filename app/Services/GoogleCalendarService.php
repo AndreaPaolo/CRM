@@ -38,6 +38,14 @@ class GoogleCalendarService
         $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
         $endAt = $startAt->copy()->addMinutes($appuntamento->durata);
 
+        $attendees = [];
+        if (! empty($appuntamento->cliente?->email)) {
+            $attendees[] = [
+                'email' => $appuntamento->cliente->email,
+                'displayName' => $appuntamento->cliente->nome . ' ' . $appuntamento->cliente->cognome,
+            ];
+        }
+
         $event = new Event([
             'id' => $eventId,
             'summary' => $this->buildSummary($appuntamento),
@@ -50,6 +58,7 @@ class GoogleCalendarService
                 'dateTime' => $endAt->format('c'),
                 'timeZone' => 'Europe/Rome',
             ]),
+            'attendees' => $attendees,
             'extendedProperties' => [
                 'private' => [
                     'appuntamento_id' => (string) $appuntamento->id,
@@ -61,9 +70,13 @@ class GoogleCalendarService
         try {
             try {
                 $this->calendar->events->get($this->calendarId, $eventId);
-                $this->calendar->events->update($this->calendarId, $eventId, $event);
+                $this->calendar->events->update($this->calendarId, $eventId, $event, [
+                    'sendUpdates' => 'all',
+                ]);
             } catch (Throwable $e) {
-                $this->calendar->events->insert($this->calendarId, $event);
+                $this->calendar->events->insert($this->calendarId, $event, [
+                    'sendUpdates' => 'all',
+                ]);
             }
 
             $appuntamento->forceFill([

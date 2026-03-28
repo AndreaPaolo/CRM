@@ -88,41 +88,23 @@ class Appuntamento extends Model
         });
 
         static::saved(function (Appuntamento $appuntamento) {
-            $abbonamento = $appuntamento->abbonamento;
+            $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
 
-            if (! $abbonamento || ! $abbonamento->servizio) {
+            if (! $abbonamento) {
                 return;
             }
 
-            $totaleIncontri = $abbonamento->servizio->incontri;
-
-            $ultimoNumero = self::where('abbonamento_id', $abbonamento->id)
-                ->max('numerazione') ?? 0;
-
-            $terminatoPerLezioni = $ultimoNumero >= $totaleIncontri;
-            $terminatoPerData = $abbonamento->data_fine && Carbon::today()->gt(Carbon::parse($abbonamento->data_fine));
-
-            $abbonamento->terminato = $terminatoPerLezioni || $terminatoPerData;
-            $abbonamento->saveQuietly();
+            $abbonamento->aggiornaStatoTerminato();
         });
 
         static::deleted(function (Appuntamento $appuntamento) {
-            $abbonamento = $appuntamento->abbonamento;
+            $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
 
-            if (! $abbonamento || ! $abbonamento->servizio) {
+            if (! $abbonamento) {
                 return;
             }
 
-            $totaleIncontri = $abbonamento->servizio->incontri;
-
-            $ultimoNumero = self::where('abbonamento_id', $abbonamento->id)
-                ->max('numerazione') ?? 0;
-
-            $terminatoPerLezioni = $ultimoNumero >= $totaleIncontri;
-            $terminatoPerData = $abbonamento->data_fine && Carbon::today()->gt(Carbon::parse($abbonamento->data_fine));
-
-            $abbonamento->terminato = $terminatoPerLezioni || $terminatoPerData;
-            $abbonamento->saveQuietly();
+            $abbonamento->aggiornaStatoTerminato();
         });
     }
 }

@@ -60,6 +60,20 @@ class Abbonamento extends Model
         });
     }
 
+    public function aggiornaStatoTerminato(): void
+    {
+        $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
+
+        $ultimoNumero = $this->appuntamenti()->max('numerazione') ?? 0;
+
+        $terminatoPerLezioni = $totaleIncontri > 0 && $ultimoNumero >= $totaleIncontri;
+        $terminatoPerData = $this->data_fine
+            && Carbon::today()->gt(Carbon::parse($this->data_fine));
+
+        $this->terminato = $terminatoPerLezioni || $terminatoPerData;
+        $this->saveQuietly();
+    }
+
     public function appuntamenti(){
         return $this->hasMany(Appuntamento::class);
     }

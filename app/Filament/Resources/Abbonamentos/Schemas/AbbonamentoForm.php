@@ -81,8 +81,8 @@ class AbbonamentoForm
 
                         Toggle::make('terminato')
                             ->label('Terminato')
-                            ->disabled()
-                            ->dehydrated(),
+                            ->default(false)
+                            ->helperText('Attivalo manualmente se vuoi chiudere l’abbonamento prima della scadenza automatica.'),
                     ])
                     ->columns(2);
     }
