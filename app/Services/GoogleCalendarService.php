@@ -110,12 +110,7 @@ class GoogleCalendarService
 
     protected function buildDescription(Appuntamento $appuntamento): string
     {
-        return trim(implode("\n", [
-            'APPUNTAMENTO_ID: ' . $appuntamento->id,
-            'ABBONAMENTO_ID: ' . $appuntamento->abbonamento_id,
-            '',
-            (string) ($appuntamento->descrizione ?? ''),
-        ]));
+        return (string) ($appuntamento->descrizione ?? '');
     }
 
     protected function buildEventId(Appuntamento $appuntamento): string
