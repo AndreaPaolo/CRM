@@ -17,4 +17,8 @@ class Cliente extends Model
         'telefono',
         'email',
     ];
+
+    public function abbonamenti(){
+        return $this->hasMany(Abbonamento::class);
+    }
 }

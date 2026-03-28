@@ -17,4 +17,8 @@ class Servizio extends Model
         'durata',
         'incontri',
     ];
+
+    public function abbonamenti(){
+        return $this->hasMany(Abbonamento::class);
+    }
 }
