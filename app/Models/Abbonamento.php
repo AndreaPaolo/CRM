@@ -77,4 +77,22 @@ class Abbonamento extends Model
     public function appuntamenti(){
         return $this->hasMany(Appuntamento::class);
     }
+
+    public function aggiornaNumerazioneAppuntamenti(): void
+    {
+        $appuntamenti = Appuntamento::query()
+            ->where('abbonamento_id', $this->id)
+            ->orderBy('data_ora')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($appuntamenti as $index => $appuntamento) {
+            $nuovoNumero = $index + 1;
+
+            if ((int) $appuntamento->numerazione !== $nuovoNumero) {
+                $appuntamento->numerazione = $nuovoNumero;
+                $appuntamento->saveQuietly();
+            }
+        }
+    }
 }

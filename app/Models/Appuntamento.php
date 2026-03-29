@@ -57,16 +57,14 @@ class Appuntamento extends Model
 
     protected static function booted(): void
     {
+
         static::creating(function (Appuntamento $appuntamento) {
             if (! $appuntamento->user_id && auth()->check()) {
                 $appuntamento->user_id = auth()->id();
             }
 
-            if (! $appuntamento->numerazione && $appuntamento->abbonamento_id) {
-                $ultimaNumerazione = self::where('abbonamento_id', $appuntamento->abbonamento_id)
-                    ->max('numerazione');
-
-                $appuntamento->numerazione = ($ultimaNumerazione ?? 0) + 1;
+            if (! $appuntamento->numerazione) {
+                $appuntamento->numerazione = 1;
             }
 
             $appuntamento->calendar_sync_status = 'dirty';
@@ -94,6 +92,7 @@ class Appuntamento extends Model
                 return;
             }
 
+            $abbonamento->aggiornaNumerazioneAppuntamenti();
             $abbonamento->aggiornaStatoTerminato();
         });
 
@@ -104,6 +103,7 @@ class Appuntamento extends Model
                 return;
             }
 
+            $abbonamento->aggiornaNumerazioneAppuntamenti();
             $abbonamento->aggiornaStatoTerminato();
         });
     }
