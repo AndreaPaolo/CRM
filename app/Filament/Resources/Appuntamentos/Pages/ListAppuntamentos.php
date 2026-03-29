@@ -75,7 +75,7 @@ class ListAppuntamentos extends ListRecords
                 $appuntamentiDaSincronizzare = $abbonamento->appuntamenti
                     ->filter(function ($appuntamento) {
                         return in_array($appuntamento->calendar_sync_status, ['dirty', 'failed'])
-                            || $appuntamento->updated_at >= now()->subDays(7);
+                            || $appuntamento->updated_at >= now()->subDays(1);
                     });
 
                 foreach ($appuntamentiDaSincronizzare as $appuntamento) {
