@@ -25,4 +25,20 @@ class Cliente extends Model
     public function appuntamenti(){
         return $this->hasMany(Appuntamento::class);
     }
+
+    public function abbonamentiOrdinati()
+    {
+        return $this->hasMany(Abbonamento::class)
+            ->orderByDesc('data_inizio')
+            ->orderByDesc('created_at');
+    }
+
+    public function ultimoAbbonamentoAttivo(): ?Abbonamento
+    {
+        return $this->abbonamenti()
+            ->where('terminato', false)
+            ->orderByDesc('data_inizio')
+            ->orderByDesc('created_at')
+            ->first();
+    }
 }

@@ -9,24 +9,12 @@ class AppuntamentoObserver
 {
     public function created(Appuntamento $appuntamento): void
     {
-        try {
-            app(GoogleCalendarService::class)->syncAppuntamento(
-                $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
-            );
-        } catch (Throwable $e) {
-            // stato già segnato come failed nel service
-        }
+        $this->syncPacchetto($appuntamento);
     }
 
     public function updated(Appuntamento $appuntamento): void
     {
-        try {
-            app(GoogleCalendarService::class)->syncAppuntamento(
-                $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
-            );
-        } catch (Throwable $e) {
-            // stato già segnato come failed nel service
-        }
+        $this->syncPacchetto($appuntamento);
     }
 
     public function deleted(Appuntamento $appuntamento): void
@@ -36,6 +24,16 @@ class AppuntamentoObserver
         } catch (Throwable $e) {
             //
         }
+
+        $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
+
+        if (! $abbonamento) {
+            return;
+        }
+
+        $abbonamento->aggiornaNumerazioneAppuntamenti();
+        $abbonamento->aggiornaStatoTerminato();
+        $abbonamento->sincronizzaAppuntamentiSuGoogle();
     }
 
     public function restored(Appuntamento $appuntamento): void
@@ -46,5 +44,18 @@ class AppuntamentoObserver
     public function forceDeleted(Appuntamento $appuntamento): void
     {
         app(GoogleCalendarService::class)->deleteAppuntamento($appuntamento);
+    }
+
+    protected function syncPacchetto(Appuntamento $appuntamento): void
+    {
+        $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
+
+        if (! $abbonamento) {
+            return;
+        }
+
+        $abbonamento->aggiornaNumerazioneAppuntamenti();
+        $abbonamento->aggiornaStatoTerminato();
+        $abbonamento->sincronizzaAppuntamentiSuGoogle();
     }
 }

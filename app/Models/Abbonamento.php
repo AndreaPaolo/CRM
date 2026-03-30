@@ -20,12 +20,14 @@ class Abbonamento extends Model
         'data_inizio',
         'data_fine',
         'terminato',
+        'terminato_manualmente',
     ];
 
     protected $casts = [
         'data_inizio' => 'date',
         'data_fine' => 'date',
         'terminato' => 'boolean',
+        'terminato_manualmente' => 'boolean',
         'prezzo' => 'decimal:2',
     ];
 
@@ -41,6 +43,7 @@ class Abbonamento extends Model
 
     protected static function booted(): void
     {
+        
         static::saving(function (Abbonamento $abbonamento) {
             if ($abbonamento->data_inizio && $abbonamento->servizio_id) {
                 $servizio = Servizio::find($abbonamento->servizio_id);
@@ -52,25 +55,43 @@ class Abbonamento extends Model
                 }
             }
 
-            if ($abbonamento->data_fine) {
-                $abbonamento->terminato = Carbon::today()->gt(
-                    Carbon::parse($abbonamento->data_fine)
-                );
+            // Se il toggle "terminato" è stato cambiato a mano,
+            // salvo anche il flag manuale.
+            if ($abbonamento->isDirty('terminato')) {
+                $abbonamento->terminato_manualmente = (bool) $abbonamento->terminato;
             }
         });
     }
 
     public function aggiornaStatoTerminato(): void
     {
-        $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
+        if ($this->terminato_manualmente) {
+            $this->terminato = true;
+            $this->saveQuietly();
 
+            return;
+        }
+
+        $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
         $ultimoNumero = $this->appuntamenti()->max('numerazione') ?? 0;
 
-        $terminatoPerLezioni = $totaleIncontri > 0 && $ultimoNumero >= $totaleIncontri;
-        $terminatoPerData = $this->data_fine
-            && Carbon::today()->gt(Carbon::parse($this->data_fine));
+        // Se incontri > 0, si chiude automaticamente:
+        // - per data fine passata
+        // - oppure per ultime lezioni raggiunte
+        if ($totaleIncontri > 0) {
+            $terminatoPerLezioni = $ultimoNumero >= $totaleIncontri;
+            $terminatoPerData = $this->data_fine
+                && now()->startOfDay()->gt(\Carbon\Carbon::parse($this->data_fine)->startOfDay());
 
-        $this->terminato = $terminatoPerLezioni || $terminatoPerData;
+            $this->terminato = $terminatoPerLezioni || $terminatoPerData;
+            $this->saveQuietly();
+
+            return;
+        }
+
+        // Se incontri = 0, NON si chiude automaticamente.
+        // Solo manualmente.
+        $this->terminato = false;
         $this->saveQuietly();
     }
 
@@ -92,6 +113,26 @@ class Abbonamento extends Model
             if ((int) $appuntamento->numerazione !== $nuovoNumero) {
                 $appuntamento->numerazione = $nuovoNumero;
                 $appuntamento->saveQuietly();
+            }
+        }
+    }
+
+    public function sincronizzaAppuntamentiSuGoogle(): void
+    {
+        $appuntamenti = $this->appuntamenti()
+            ->with(['cliente', 'abbonamento.servizio', 'pt'])
+            ->orderBy('data_ora')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($appuntamenti as $appuntamento) {
+            try {
+                app(\App\Services\GoogleCalendarService::class)
+                    ->syncAppuntamento(
+                        $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+                    );
+            } catch (\Throwable $e) {
+                //
             }
         }
     }

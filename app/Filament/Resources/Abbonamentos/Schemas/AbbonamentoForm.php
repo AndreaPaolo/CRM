@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Hidden;
 
 class AbbonamentoForm
 {
@@ -81,8 +82,13 @@ class AbbonamentoForm
 
                         Toggle::make('terminato')
                             ->label('Terminato')
-                            ->default(false)
-                            ->helperText('Attivalo manualmente se vuoi chiudere l’abbonamento prima della scadenza automatica.'),
+                            ->live()
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                $set('terminato_manualmente', (bool) $state);
+                            }),
+
+                        Hidden::make('terminato_manualmente')
+                            ->default(false),
                     ])
                     ->columns(2);
     }

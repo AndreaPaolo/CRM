@@ -64,7 +64,7 @@ class Appuntamento extends Model
             }
 
             if (! $appuntamento->numerazione) {
-                $appuntamento->numerazione = 1;
+                $appuntamento->numerazione = 0;
             }
 
             $appuntamento->calendar_sync_status = 'dirty';
