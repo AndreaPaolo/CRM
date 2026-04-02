@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\GoogleCalendarService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -10,6 +11,8 @@ class Appuntamento extends Model
     use SoftDeletes;
 
     protected $table = 'appuntamenti';
+
+    protected static bool $isDeletingSessioneCondivisa = false;
 
     protected $fillable = [
         'cliente_id',
@@ -36,11 +39,6 @@ class Appuntamento extends Model
         return $this->belongsTo(Cliente::class);
     }
 
-    public function clientePrincipale()
-    {
-        return $this->belongsTo(Cliente::class, 'cliente_id');
-    }
-
     public function abbonamento()
     {
         return $this->belongsTo(Abbonamento::class);
@@ -51,23 +49,13 @@ class Appuntamento extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    public function clienti()
-    {
-        return $this->belongsToMany(Cliente::class, 'appuntamento_cliente')
-            ->withTimestamps()
-            ->withPivot([
-                'google_calendar_event_id',
-                'calendar_sync_status',
-                'calendar_synced_at',
-                'calendar_last_error',
-            ]);
-    }
-
     public function getNumerazioneLabelAttribute(): string
     {
         $totale = $this->abbonamento?->servizio?->incontri ?? 0;
 
-        return 'Lezione ' . $this->numerazione . ' / ' . $totale;
+        return $totale > 0
+            ? 'Lezione ' . $this->numerazione . ' / ' . $totale
+            : 'Lezione ' . $this->numerazione;
     }
 
     protected static function booted(): void
@@ -93,17 +81,55 @@ class Appuntamento extends Model
                 'durata',
                 'descrizione',
                 'numerazione',
+                'sessione_condivisa_uuid',
             ])) {
                 $appuntamento->calendar_sync_status = 'dirty';
                 $appuntamento->calendar_last_error = null;
             }
         });
 
-        static::saved(function (Appuntamento $appuntamento) {
-            if ($appuntamento->cliente_id && $appuntamento->clienti()->count() === 0) {
-                $appuntamento->clienti()->syncWithoutDetaching([$appuntamento->cliente_id]);
+        static::deleting(function (Appuntamento $appuntamento) {
+            // Evita loop quando stiamo già cancellando tutta la sessione
+            if (self::$isDeletingSessioneCondivisa) {
+                return;
             }
 
+            // Se non è una sessione condivisa, lascia fare la delete normale
+            if (! $appuntamento->sessione_condivisa_uuid) {
+                return;
+            }
+
+            self::$isDeletingSessioneCondivisa = true;
+
+            try {
+                $siblings = self::query()
+                    ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                    ->where('id', '!=', $appuntamento->id)
+                    ->get();
+
+                $service = app(GoogleCalendarService::class);
+
+                foreach ($siblings as $sibling) {
+                    try {
+                        $service->deleteAppuntamento($sibling->fresh(['cliente']));
+                    } catch (\Throwable $e) {
+                        //
+                    }
+                }
+
+                // Elimina i "fratelli" senza rilanciare gli eventi del model
+                self::withoutEvents(function () use ($appuntamento) {
+                    self::query()
+                        ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                        ->where('id', '!=', $appuntamento->id)
+                        ->delete();
+                });
+            } finally {
+                self::$isDeletingSessioneCondivisa = false;
+            }
+        });
+
+        static::saved(function (Appuntamento $appuntamento) {
             $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
 
             if (! $abbonamento) {

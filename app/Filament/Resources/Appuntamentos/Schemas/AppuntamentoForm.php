@@ -22,57 +22,38 @@ class AppuntamentoForm
                 Hidden::make('user_id')
                     ->default(fn () => Auth::id()),
 
-                // Compatibilità col vecchio sistema:
-                // se vuoi continuare a vedere il cliente principale puoi lasciarlo.
                 Select::make('cliente_id')
                     ->label('Cliente principale')
                     ->relationship('cliente', 'nome')
                     ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
                     ->searchable()
                     ->preload()
+                    ->required()
                     ->live()
-                    ->afterStateUpdated(function ($state, callable $set) {
-                        // Quando cambio cliente principale resetto abbonamento e partecipanti
+                    ->afterStateUpdated(function (callable $set) {
                         $set('abbonamento_id', null);
                         $set('clienti', []);
-                    })
-                    ->helperText('Campo legacy: usato solo per compatibilità con i vecchi appuntamenti.'),
+                    }),
 
                 Select::make('abbonamento_id')
                     ->label('Abbonamento')
                     ->options(function (callable $get) {
                         $clienteId = $get('cliente_id');
 
-                        // Se scelgo un cliente principale, mostro i suoi abbonamenti
-                        // usando sia il vecchio cliente_id sia i nuovi abbonamenti condivisi.
-                        if ($clienteId) {
-                            return Abbonamento::query()
-                                ->where(function ($query) use ($clienteId) {
-                                    $query->where('cliente_id', $clienteId)
-                                        ->orWhereHas('clienti', function ($q) use ($clienteId) {
-                                            $q->whereKey($clienteId);
-                                        });
-                                })
-                                ->with('servizio')
-                                ->orderByDesc('data_inizio')
-                                ->orderByDesc('created_at')
-                                ->get()
-                                ->mapWithKeys(function ($abbonamento) {
-                                    $nomeServizio = $abbonamento->servizio?->nome ?? 'Servizio';
-
-                                    return [
-                                        $abbonamento->id => $nomeServizio . ' | dal ' . optional($abbonamento->data_inizio)->format('d/m/Y'),
-                                    ];
-                                })
-                                ->toArray();
+                        if (! $clienteId) {
+                            return [];
                         }
 
-                        // Se non c'è cliente principale, mostro tutti gli abbonamenti recenti
                         return Abbonamento::query()
+                            ->where(function ($query) use ($clienteId) {
+                                $query->where('cliente_id', $clienteId)
+                                    ->orWhereHas('clienti', function ($q) use ($clienteId) {
+                                        $q->whereKey($clienteId);
+                                    });
+                            })
                             ->with('servizio')
                             ->orderByDesc('data_inizio')
                             ->orderByDesc('created_at')
-                            ->limit(50)
                             ->get()
                             ->mapWithKeys(function ($abbonamento) {
                                 $nomeServizio = $abbonamento->servizio?->nome ?? 'Servizio';
@@ -87,10 +68,7 @@ class AppuntamentoForm
                     ->preload()
                     ->required()
                     ->live()
-                    ->afterStateUpdated(function ($state, callable $set) {
-                        // Quando cambio abbonamento resetto i partecipanti
-                        $set('clienti', []);
-                    }),
+                    ->afterStateUpdated(fn (callable $set) => $set('clienti', [])),
 
                 Select::make('clienti')
                     ->label('Altri partecipanti')
@@ -108,7 +86,10 @@ class AppuntamentoForm
                             return [];
                         }
 
+                        $clientePrincipale = $get('cliente_id');
+
                         return $abbonamento->clienti
+                            ->filter(fn ($cliente) => (int) $cliente->id !== (int) $clientePrincipale)
                             ->mapWithKeys(function ($cliente) {
                                 return [
                                     $cliente->id => $cliente->nome . ' ' . $cliente->cognome,
@@ -148,8 +129,8 @@ class AppuntamentoForm
 
                         return match ($abbonamento->tipo_partecipazione) {
                             'gruppo' => 'Per lo small group seleziona tutti gli altri partecipanti della lezione.',
-                            'condiviso' => 'Per il pacchetto condiviso puoi lasciarlo vuoto se stai inserendo solo il cliente principale.',
-                            default => 'Per il pacchetto singolo lascia vuoto.',
+                            'condiviso' => 'Per il pacchetto condiviso puoi lasciarlo vuoto.',
+                            default => null,
                         };
                     }),
 
@@ -171,11 +152,9 @@ class AppuntamentoForm
                         $prossimoNumero = (Appuntamento::where('abbonamento_id', $abbonamentoId)->max('numerazione') ?? 0) + 1;
                         $totale = $abbonamento->servizio->incontri;
 
-                        if ((int) $totale > 0) {
-                            return 'Lezione ' . $prossimoNumero . ' / ' . $totale;
-                        }
-
-                        return 'Lezione ' . $prossimoNumero;
+                        return (int) $totale > 0
+                            ? 'Lezione ' . $prossimoNumero . ' / ' . $totale
+                            : 'Lezione ' . $prossimoNumero;
                     }),
 
                 DateTimePicker::make('data_ora')

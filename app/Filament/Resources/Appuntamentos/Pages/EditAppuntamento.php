@@ -24,7 +24,6 @@ class EditAppuntamento extends EditRecord
     protected function handleRecordUpdate($record, array $data): Appuntamento
     {
         if ($record->sessione_condivisa_uuid) {
-            // prendo tutti i partecipanti finali: cliente principale + selezionati
             $partecipanti = collect($this->partecipantiSelezionati);
 
             if (! empty($data['cliente_id'])) {
@@ -37,7 +36,6 @@ class EditAppuntamento extends EditRecord
                 ->values()
                 ->all();
 
-            // aggiorno i record esistenti della sessione condivisa
             Appuntamento::query()
                 ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
                 ->update([
@@ -47,13 +45,11 @@ class EditAppuntamento extends EditRecord
                     'updated_at' => now(),
                 ]);
 
-            // clienti già presenti nella sessione
             $esistenti = Appuntamento::query()
                 ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
                 ->pluck('cliente_id')
                 ->all();
 
-            // aggiungo i mancanti
             $daAggiungere = array_diff($partecipanti, $esistenti);
 
             foreach ($daAggiungere as $clienteId) {
@@ -66,7 +62,6 @@ class EditAppuntamento extends EditRecord
                 Appuntamento::create($payload);
             }
 
-            // elimino quelli non più selezionati
             $daEliminare = array_diff($esistenti, $partecipanti);
 
             if (! empty($daEliminare)) {

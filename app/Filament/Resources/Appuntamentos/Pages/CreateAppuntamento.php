@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Appuntamentos\Pages;
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class CreateAppuntamento extends CreateRecord
@@ -24,7 +25,6 @@ class CreateAppuntamento extends CreateRecord
 
     protected function handleRecordCreation(array $data): Appuntamento
     {
-        // Unisco cliente principale + partecipanti selezionati
         $partecipanti = collect($this->partecipantiSelezionati);
 
         if (! empty($data['cliente_id'])) {
@@ -37,7 +37,6 @@ class CreateAppuntamento extends CreateRecord
             ->values()
             ->all();
 
-        // Se non c'è nessuno, uso almeno cliente_id
         if (empty($partecipanti) && ! empty($data['cliente_id'])) {
             $partecipanti = [$data['cliente_id']];
         }

@@ -93,19 +93,16 @@ class Abbonamento extends Model
 
         $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
 
-        $appuntamenti = $this->appuntamenti()->get();
-
-        $sessioni = $appuntamenti
-            ->map(function ($appuntamento) {
-                return $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id;
-            })
+        $sessioni = $this->appuntamenti()
+            ->get()
+            ->map(fn ($appuntamento) => $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id)
             ->unique()
             ->count();
 
         if ($totaleIncontri > 0) {
             $terminatoPerLezioni = $sessioni >= $totaleIncontri;
             $terminatoPerData = $this->data_fine
-                && now()->startOfDay()->gt(\Carbon\Carbon::parse($this->data_fine)->startOfDay());
+                && now()->startOfDay()->gt(Carbon::parse($this->data_fine)->startOfDay());
 
             $this->terminato = $terminatoPerLezioni || $terminatoPerData;
             $this->saveQuietly();
