@@ -2,10 +2,8 @@
 
 namespace App\Models;
 
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Facades\Auth;
 
 class Appuntamento extends Model
 {
@@ -16,12 +14,12 @@ class Appuntamento extends Model
     protected $fillable = [
         'cliente_id',
         'abbonamento_id',
+        'sessione_condivisa_uuid',
         'user_id',
         'data_ora',
         'durata',
         'descrizione',
         'numerazione',
-        'google_calendar_event_id',
         'google_calendar_event_id',
         'calendar_sync_status',
         'calendar_synced_at',
@@ -38,6 +36,11 @@ class Appuntamento extends Model
         return $this->belongsTo(Cliente::class);
     }
 
+    public function clientePrincipale()
+    {
+        return $this->belongsTo(Cliente::class, 'cliente_id');
+    }
+
     public function abbonamento()
     {
         return $this->belongsTo(Abbonamento::class);
@@ -46,6 +49,18 @@ class Appuntamento extends Model
     public function pt()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function clienti()
+    {
+        return $this->belongsToMany(Cliente::class, 'appuntamento_cliente')
+            ->withTimestamps()
+            ->withPivot([
+                'google_calendar_event_id',
+                'calendar_sync_status',
+                'calendar_synced_at',
+                'calendar_last_error',
+            ]);
     }
 
     public function getNumerazioneLabelAttribute(): string
@@ -57,7 +72,6 @@ class Appuntamento extends Model
 
     protected static function booted(): void
     {
-
         static::creating(function (Appuntamento $appuntamento) {
             if (! $appuntamento->user_id && auth()->check()) {
                 $appuntamento->user_id = auth()->id();
@@ -86,6 +100,10 @@ class Appuntamento extends Model
         });
 
         static::saved(function (Appuntamento $appuntamento) {
+            if ($appuntamento->cliente_id && $appuntamento->clienti()->count() === 0) {
+                $appuntamento->clienti()->syncWithoutDetaching([$appuntamento->cliente_id]);
+            }
+
             $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
 
             if (! $abbonamento) {

@@ -26,6 +26,11 @@ class Cliente extends Model
         return $this->hasMany(Appuntamento::class);
     }
 
+    public function abbonamentiCondivisi()
+    {
+        return $this->belongsToMany(Abbonamento::class, 'abbonamento_cliente')->withTimestamps();
+    }
+
     public function abbonamentiOrdinati()
     {
         return $this->hasMany(Abbonamento::class)

@@ -15,8 +15,7 @@ class GoogleCalendarService
     protected Calendar $calendar;
     protected string $calendarId;
 
-    public function __construct()
-    {
+    public function __construct() {
         $client = new Client();
         $client->setApplicationName(config('app.name'));
         $client->setScopes([Calendar::CALENDAR]);
@@ -31,8 +30,7 @@ class GoogleCalendarService
         $this->calendarId = config('services.google.calendar_id');
     }
 
-    public function syncAppuntamento(Appuntamento $appuntamento): void
-    {
+    public function syncAppuntamento(Appuntamento $appuntamento): void {
         $eventId = $this->buildEventId($appuntamento);
 
         $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
@@ -95,8 +93,7 @@ class GoogleCalendarService
         }
     }
 
-    public function deleteAppuntamento(Appuntamento $appuntamento): void
-    {
+    public function deleteAppuntamento(Appuntamento $appuntamento): void {
         $eventId = $appuntamento->google_calendar_event_id ?: $this->buildEventId($appuntamento);
 
         try {
@@ -106,8 +103,7 @@ class GoogleCalendarService
         }
     }
 
-    protected function buildSummary(Appuntamento $appuntamento): string
-    {
+    protected function buildSummary(Appuntamento $appuntamento): string {
         $cliente = $appuntamento->cliente;
         $pt = $appuntamento->pt?->name ?? 'PT';
         $totale = $appuntamento->abbonamento?->servizio?->incontri ?? 0;
@@ -122,19 +118,15 @@ class GoogleCalendarService
         );
     }
 
-    protected function buildDescription(Appuntamento $appuntamento): string
-    {
+    protected function buildDescription(Appuntamento $appuntamento): string {
         return $appuntamento->descrizione ?: 'Appuntamento CRM';
     }
 
-    protected function buildEventId(Appuntamento $appuntamento): string
-    {
+    protected function buildEventId(Appuntamento $appuntamento): string {
         return 'app' . str_pad((string) $appuntamento->id, 10, '0', STR_PAD_LEFT);
     }
 
-
-    public function deleteOrphanCalendarEvents(): int
-    {
+    public function deleteOrphanCalendarEvents(): int {
         $deleted = 0;
         $pageToken = null;
         $eventsToDelete = [];
@@ -179,5 +171,123 @@ class GoogleCalendarService
         }
 
         return $deleted;
+    }
+
+    public function syncAppuntamentoPerPartecipanti(\App\Models\Appuntamento $appuntamento): void {
+        $appuntamento->loadMissing(['clienti', 'abbonamento.servizio', 'pt']);
+
+        foreach ($appuntamento->clienti as $cliente) {
+            $this->syncAppuntamentoPerCliente($appuntamento, $cliente);
+        }
+    }
+
+    public function syncAppuntamentoPerCliente(\App\Models\Appuntamento $appuntamento, \App\Models\Cliente $cliente): void {
+        $eventId = $this->buildEventIdPerCliente($appuntamento, $cliente);
+
+        $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
+        $endAt = $startAt->copy()->addMinutes($appuntamento->durata);
+
+        $summary = $this->buildSummaryPerCliente($appuntamento, $cliente);
+        $description = (string) ($appuntamento->descrizione ?? '');
+
+        $attendees = [];
+
+        if (! empty($cliente->email) && filter_var($cliente->email, FILTER_VALIDATE_EMAIL)) {
+            $attendees[] = [
+                'email' => $cliente->email,
+                'displayName' => $cliente->nome . ' ' . $cliente->cognome,
+            ];
+        }
+
+        $event = new \Google\Service\Calendar\Event([
+            'id' => $eventId,
+            'summary' => $summary,
+            'description' => $description,
+            'start' => new \Google\Service\Calendar\EventDateTime([
+                'dateTime' => $startAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ]),
+            'end' => new \Google\Service\Calendar\EventDateTime([
+                'dateTime' => $endAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ]),
+            'attendees' => $attendees,
+            'extendedProperties' => [
+                'private' => [
+                    'appuntamento_id' => (string) $appuntamento->id,
+                    'cliente_id' => (string) $cliente->id,
+                    'crm_source' => 'crm',
+                ],
+            ],
+        ]);
+
+        try {
+            try {
+                $this->calendar->events->get($this->calendarId, $eventId);
+                $this->calendar->events->update($this->calendarId, $eventId, $event, [
+                    'sendUpdates' => 'none',
+                ]);
+            } catch (\Throwable $e) {
+                $this->calendar->events->insert($this->calendarId, $event, [
+                    'sendUpdates' => 'none',
+                ]);
+            }
+
+            \DB::table('appuntamento_cliente')
+                ->where('appuntamento_id', $appuntamento->id)
+                ->where('cliente_id', $cliente->id)
+                ->update([
+                    'google_calendar_event_id' => $eventId,
+                    'calendar_sync_status' => 'synced',
+                    'calendar_synced_at' => now(),
+                    'calendar_last_error' => null,
+                    'updated_at' => now(),
+                ]);
+        } catch (\Throwable $e) {
+            \DB::table('appuntamento_cliente')
+                ->where('appuntamento_id', $appuntamento->id)
+                ->where('cliente_id', $cliente->id)
+                ->update([
+                    'calendar_sync_status' => 'failed',
+                    'calendar_last_error' => $e->getMessage(),
+                    'updated_at' => now(),
+                ]);
+
+            throw $e;
+        }
+    }
+
+    protected function buildSummaryPerCliente(\App\Models\Appuntamento $appuntamento, \App\Models\Cliente $cliente): string {
+        $pt = $appuntamento->pt?->name ?? 'PT';
+        $totale = $appuntamento->abbonamento?->servizio?->incontri ?? 0;
+
+        return sprintf(
+            '%s %s: %s/%s PT %s',
+            $cliente->nome,
+            $cliente->cognome,
+            $appuntamento->numerazione,
+            $totale,
+            $pt
+        );
+    }
+
+    protected function buildEventIdPerCliente(\App\Models\Appuntamento $appuntamento, \App\Models\Cliente $cliente): string {
+        return 'app' . str_pad((string) $appuntamento->id, 8, '0', STR_PAD_LEFT)
+            . 'cli'
+            . str_pad((string) $cliente->id, 8, '0', STR_PAD_LEFT);
+    }
+
+    public function deleteAppuntamentoPerPartecipanti(\App\Models\Appuntamento $appuntamento): void {
+        $appuntamento->loadMissing('clienti');
+
+        foreach ($appuntamento->clienti as $cliente) {
+            $eventId = $this->buildEventIdPerCliente($appuntamento, $cliente);
+
+            try {
+                $this->calendar->events->delete($this->calendarId, $eventId);
+            } catch (\Throwable $e) {
+                //
+            }
+        }
     }
 }

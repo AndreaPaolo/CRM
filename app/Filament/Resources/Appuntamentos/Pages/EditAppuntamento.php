@@ -3,21 +3,101 @@
 namespace App\Filament\Resources\Appuntamentos\Pages;
 
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
-use Filament\Actions\DeleteAction;
-use Filament\Actions\ForceDeleteAction;
-use Filament\Actions\RestoreAction;
+use App\Models\Appuntamento;
 use Filament\Resources\Pages\EditRecord;
 
 class EditAppuntamento extends EditRecord
 {
     protected static string $resource = AppuntamentoResource::class;
 
-    protected function getHeaderActions(): array
+    protected array $partecipantiSelezionati = [];
+
+    protected function mutateFormDataBeforeSave(array $data): array
     {
-        return [
-            DeleteAction::make(),
-            ForceDeleteAction::make(),
-            RestoreAction::make(),
-        ];
+        $this->partecipantiSelezionati = $data['clienti'] ?? [];
+
+        unset($data['clienti']);
+
+        return $data;
+    }
+
+    protected function handleRecordUpdate($record, array $data): Appuntamento
+    {
+        if ($record->sessione_condivisa_uuid) {
+            // prendo tutti i partecipanti finali: cliente principale + selezionati
+            $partecipanti = collect($this->partecipantiSelezionati);
+
+            if (! empty($data['cliente_id'])) {
+                $partecipanti->prepend($data['cliente_id']);
+            }
+
+            $partecipanti = $partecipanti
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            // aggiorno i record esistenti della sessione condivisa
+            Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                ->update([
+                    'data_ora' => $data['data_ora'],
+                    'durata' => $data['durata'],
+                    'descrizione' => $data['descrizione'] ?? null,
+                    'updated_at' => now(),
+                ]);
+
+            // clienti già presenti nella sessione
+            $esistenti = Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                ->pluck('cliente_id')
+                ->all();
+
+            // aggiungo i mancanti
+            $daAggiungere = array_diff($partecipanti, $esistenti);
+
+            foreach ($daAggiungere as $clienteId) {
+                $payload = $data;
+                $payload['cliente_id'] = $clienteId;
+                $payload['abbonamento_id'] = $record->abbonamento_id;
+                $payload['user_id'] = $record->user_id;
+                $payload['sessione_condivisa_uuid'] = $record->sessione_condivisa_uuid;
+
+                Appuntamento::create($payload);
+            }
+
+            // elimino quelli non più selezionati
+            $daEliminare = array_diff($esistenti, $partecipanti);
+
+            if (! empty($daEliminare)) {
+                Appuntamento::query()
+                    ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                    ->whereIn('cliente_id', $daEliminare)
+                    ->delete();
+            }
+
+            return $record->fresh();
+        }
+
+        $record->update($data);
+
+        return $record;
+    }
+
+    protected function afterSave(): void
+    {
+        $appuntamento = $this->record->fresh([
+            'cliente',
+            'abbonamento.servizio',
+            'pt',
+        ]);
+
+        $abbonamento = $appuntamento->abbonamento;
+
+        if ($abbonamento) {
+            $abbonamento->aggiornaNumerazioneAppuntamenti();
+            $abbonamento->aggiornaStatoTerminato();
+            $abbonamento->sincronizzaAppuntamentiSuGoogle();
+        }
     }
 }

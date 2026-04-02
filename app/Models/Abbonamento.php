@@ -15,6 +15,7 @@ class Abbonamento extends Model
     protected $fillable = [
         'servizio_id',
         'cliente_id',
+        'tipo_partecipazione',
         'prezzo',
         'rate',
         'data_inizio',
@@ -41,9 +42,29 @@ class Abbonamento extends Model
         return $this->belongsTo(Cliente::class);
     }
 
+    public function clientePrincipale()
+    {
+        return $this->belongsTo(Cliente::class, 'cliente_id');
+    }
+
+    public function clienti()
+    {
+        return $this->belongsToMany(Cliente::class, 'abbonamento_cliente')->withTimestamps();
+    }
+
+    public function appuntamenti()
+    {
+        return $this->hasMany(Appuntamento::class);
+    }
+
     protected static function booted(): void
     {
-        
+        static::saved(function (Abbonamento $abbonamento) {
+            if ($abbonamento->cliente_id && $abbonamento->clienti()->count() === 0) {
+                $abbonamento->clienti()->syncWithoutDetaching([$abbonamento->cliente_id]);
+            }
+        });
+
         static::saving(function (Abbonamento $abbonamento) {
             if ($abbonamento->data_inizio && $abbonamento->servizio_id) {
                 $servizio = Servizio::find($abbonamento->servizio_id);
@@ -55,8 +76,6 @@ class Abbonamento extends Model
                 }
             }
 
-            // Se il toggle "terminato" è stato cambiato a mano,
-            // salvo anche il flag manuale.
             if ($abbonamento->isDirty('terminato')) {
                 $abbonamento->terminato_manualmente = (bool) $abbonamento->terminato;
             }
@@ -73,13 +92,18 @@ class Abbonamento extends Model
         }
 
         $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
-        $ultimoNumero = $this->appuntamenti()->max('numerazione') ?? 0;
 
-        // Se incontri > 0, si chiude automaticamente:
-        // - per data fine passata
-        // - oppure per ultime lezioni raggiunte
+        $appuntamenti = $this->appuntamenti()->get();
+
+        $sessioni = $appuntamenti
+            ->map(function ($appuntamento) {
+                return $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id;
+            })
+            ->unique()
+            ->count();
+
         if ($totaleIncontri > 0) {
-            $terminatoPerLezioni = $ultimoNumero >= $totaleIncontri;
+            $terminatoPerLezioni = $sessioni >= $totaleIncontri;
             $terminatoPerData = $this->data_fine
                 && now()->startOfDay()->gt(\Carbon\Carbon::parse($this->data_fine)->startOfDay());
 
@@ -89,14 +113,8 @@ class Abbonamento extends Model
             return;
         }
 
-        // Se incontri = 0, NON si chiude automaticamente.
-        // Solo manualmente.
         $this->terminato = false;
         $this->saveQuietly();
-    }
-
-    public function appuntamenti(){
-        return $this->hasMany(Appuntamento::class);
     }
 
     public function aggiornaNumerazioneAppuntamenti(): void
@@ -107,8 +125,18 @@ class Abbonamento extends Model
             ->orderBy('id')
             ->get();
 
-        foreach ($appuntamenti as $index => $appuntamento) {
-            $nuovoNumero = $index + 1;
+        $sessioni = [];
+        $numeroCorrente = 0;
+
+        foreach ($appuntamenti as $appuntamento) {
+            $chiaveSessione = $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id;
+
+            if (! array_key_exists($chiaveSessione, $sessioni)) {
+                $numeroCorrente++;
+                $sessioni[$chiaveSessione] = $numeroCorrente;
+            }
+
+            $nuovoNumero = $sessioni[$chiaveSessione];
 
             if ((int) $appuntamento->numerazione !== $nuovoNumero) {
                 $appuntamento->numerazione = $nuovoNumero;

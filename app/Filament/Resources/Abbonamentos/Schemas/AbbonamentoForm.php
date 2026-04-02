@@ -26,6 +26,25 @@ class AbbonamentoForm
                             ->preload()
                             ->required(),
 
+                        Select::make('tipo_partecipazione')
+                            ->label('Tipo partecipazione')
+                            ->options([
+                                'singolo' => 'Singolo',
+                                'condiviso' => 'Condiviso',
+                                'gruppo' => 'Gruppo / Small group',
+                            ])
+                            ->default('singolo')
+                            ->required(),
+
+                        Select::make('clienti')
+                            ->label('Partecipanti')
+                            ->relationship('clienti', 'nome')
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
+                            ->helperText('Per ora puoi mantenere anche il cliente principale. Questo campo serve per i pacchetti condivisi o di gruppo.'),
+
                         Select::make('servizio_id')
                             ->label('Servizio')
                             ->relationship('servizio', 'nome')
