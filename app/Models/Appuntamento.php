@@ -89,12 +89,10 @@ class Appuntamento extends Model
         });
 
         static::deleting(function (Appuntamento $appuntamento) {
-            // Evita loop quando stiamo già cancellando tutta la sessione
             if (self::$isDeletingSessioneCondivisa) {
                 return;
             }
 
-            // Se non è una sessione condivisa, lascia fare la delete normale
             if (! $appuntamento->sessione_condivisa_uuid) {
                 return;
             }
@@ -117,7 +115,6 @@ class Appuntamento extends Model
                     }
                 }
 
-                // Elimina i "fratelli" senza rilanciare gli eventi del model
                 self::withoutEvents(function () use ($appuntamento) {
                     self::query()
                         ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)

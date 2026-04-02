@@ -5,7 +5,6 @@ namespace App\Filament\Resources\Appuntamentos\Pages;
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
 use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class CreateAppuntamento extends CreateRecord

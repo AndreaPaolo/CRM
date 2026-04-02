@@ -22,6 +22,7 @@ class GoogleCalendarService
         $client->setAuthConfig(storage_path('app/credentials.json'));
 
         $tokenPath = storage_path('app/token.json');
+
         if (file_exists($tokenPath)) {
             $client->setAccessToken(json_decode(file_get_contents($tokenPath), true));
         }
@@ -70,6 +71,7 @@ class GoogleCalendarService
         try {
             try {
                 $this->calendar->events->get($this->calendarId, $eventId);
+
                 $this->calendar->events->update($this->calendarId, $eventId, $event, [
                     'sendUpdates' => 'none',
                 ]);
@@ -170,7 +172,7 @@ class GoogleCalendarService
             try {
                 $this->calendar->events->delete($this->calendarId, $eventId);
                 $deleted++;
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 //
             }
         }
