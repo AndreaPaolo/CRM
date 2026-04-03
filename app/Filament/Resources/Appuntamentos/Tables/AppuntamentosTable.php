@@ -164,7 +164,7 @@ class AppuntamentosTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->groups([
-                Group::make('giorno')
+                Group::make('data_ora')
                     ->label('Giorno')
                     ->getTitleFromRecordUsing(fn (Appuntamento $record) => $record->data_ora?->format('d/m/Y'))
                     ->getDescriptionFromRecordUsing(fn (Appuntamento $record) => $record->data_ora?->translatedFormat('l'))
@@ -197,7 +197,7 @@ class AppuntamentosTable
                     })
                     ->collapsible(),
             ])
-            ->defaultGroup('giorno')
+            ->defaultGroup('data_ora')
             ->filters([
                 SelectFilter::make('tipo_partecipazione')
                     ->label('Tipologia appuntamento')
