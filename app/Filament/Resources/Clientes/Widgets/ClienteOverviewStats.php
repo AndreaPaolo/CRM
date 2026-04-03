@@ -19,6 +19,7 @@ class ClienteOverviewStats extends StatsOverviewWidget
         }
 
         $abbonamentoAttivo = $cliente->abbonamenti()
+            ->with('servizio')
             ->where('terminato', false)
             ->orderByDesc('data_inizio')
             ->first();
@@ -45,28 +46,16 @@ class ClienteOverviewStats extends StatsOverviewWidget
         }
 
         return [
-            Stat::make(
-                'Abbonamento attivo',
-                $abbonamentoAttivo?->servizio?->nome ?? 'Nessuno'
-            )
+            Stat::make('Abbonamento attivo', $abbonamentoAttivo?->servizio?->nome ?? 'Nessuno')
                 ->color($abbonamentoAttivo ? 'success' : 'gray'),
 
-            Stat::make(
-                'Prossima lezione',
-                $prossimoAppuntamento?->data_ora?->format('d/m/Y H:i') ?? 'Nessuna'
-            )
+            Stat::make('Prossima lezione', $prossimoAppuntamento?->data_ora?->format('d/m/Y H:i') ?? 'Nessuna')
                 ->color($prossimoAppuntamento ? 'info' : 'gray'),
 
-            Stat::make(
-                'Totale appuntamenti',
-                (string) $totaleAppuntamenti
-            )
+            Stat::make('Lezioni usate', (string) $lezioniUsate)
                 ->color('warning'),
 
-            Stat::make(
-                'Lezioni usate',
-                (string) $lezioniUsate
-            )
+            Stat::make('Totale appuntamenti', (string) $totaleAppuntamenti)
                 ->color('success'),
         ];
     }

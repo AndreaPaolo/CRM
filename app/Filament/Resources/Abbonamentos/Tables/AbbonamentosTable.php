@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Filament\Resources\Appuntamentos\Tables;
+namespace App\Filament\Resources\Abbonamentos\Tables;
 
-use App\Models\Appuntamento;
+use App\Models\Abbonamentos;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Support\Enums\FontWeight;
@@ -13,7 +13,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
-class AppuntamentosTable
+class AbbonamentosTable
 {
     public static function configure(Table $table): Table
     {

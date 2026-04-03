@@ -16,6 +16,7 @@ class Cliente extends Model
         'cognome',
         'telefono',
         'email',
+        'note',
     ];
 
     public function abbonamenti(){

@@ -13,9 +13,29 @@ class CreateAppuntamento extends CreateRecord
 
     protected array $partecipantiSelezionati = [];
 
-    protected function preserveFormDataWhenCreatingAnother(array $data): array
+    public function mount(): void
     {
-        return $data;
+        parent::mount();
+
+        $data = [];
+
+        if (request()->filled('cliente_id')) {
+            $data['cliente_id'] = (int) request()->integer('cliente_id');
+        }
+
+        if (request()->filled('abbonamento_id')) {
+            $data['abbonamento_id'] = (int) request()->integer('abbonamento_id');
+        }
+
+        $clienti = request()->query('clienti');
+
+        if (is_array($clienti)) {
+            $data['clienti'] = array_map('intval', $clienti);
+        }
+
+        if (! empty($data)) {
+            $this->form->fill($data);
+        }
     }
 
     protected function mutateFormDataBeforeCreate(array $data): array
@@ -79,5 +99,10 @@ class CreateAppuntamento extends CreateRecord
             $abbonamento->aggiornaStatoTerminato();
             $abbonamento->sincronizzaAppuntamentiSuGoogle();
         }
+    }
+
+    protected function preserveFormDataWhenCreatingAnother(array $data): array
+    {
+        return $data;
     }
 }

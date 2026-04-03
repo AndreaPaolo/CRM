@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Clientes\Schemas;
 
 use Filament\Schemas\Schema;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Textarea;
 
 class ClienteForm
 {
@@ -26,6 +27,10 @@ class ClienteForm
                 TextInput::make('email')
                     ->email()
                     ->maxLength(255),
+                Textarea::make('note')
+                    ->label('Note cliente')
+                    ->rows(5)
+                    ->columnSpanFull(),
             ]);
     }
 }
