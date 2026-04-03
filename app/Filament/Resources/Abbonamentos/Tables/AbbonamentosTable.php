@@ -2,14 +2,14 @@
 
 namespace App\Filament\Resources\Abbonamentos\Tables;
 
-use App\Models\Abbonamentos;
+use App\Models\Abbonamento;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Support\Enums\FontWeight;
-use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -18,14 +18,16 @@ class AbbonamentosTable
     public static function configure(Table $table): Table
     {
         return $table
-            ->defaultSort('data_ora', 'desc')
+            ->defaultSort('data_inizio', 'desc')
             ->columns([
-                TextColumn::make('cliente_display')
+                TextColumn::make('cliente_principale')
                     ->label('Cliente')
-                    ->state(function (Appuntamento $record) {
-                        return $record->cliente
-                            ? $record->cliente->nome . ' ' . $record->cliente->cognome
-                            : '-';
+                    ->state(function (Abbonamento $record) {
+                        if (! $record->cliente) {
+                            return '-';
+                        }
+
+                        return $record->cliente->nome . ' ' . $record->cliente->cognome;
                     })
                     ->weight(FontWeight::Bold)
                     ->searchable(query: function (Builder $query, string $search): Builder {
@@ -36,42 +38,34 @@ class AbbonamentosTable
                     })
                     ->wrap(),
 
-                TextColumn::make('sessione_info')
-                    ->label('Sessione')
-                    ->state(function (Appuntamento $record) {
-                        if (! $record->sessione_condivisa_uuid) {
-                            return 'Individuale';
+                TextColumn::make('partecipanti_condivisioni')
+                    ->label('Condivisioni')
+                    ->state(function (Abbonamento $record) {
+                        $partecipanti = $record->clienti
+                            ->filter(fn ($cliente) => (int) $cliente->id !== (int) $record->cliente_id)
+                            ->map(fn ($cliente) => $cliente->nome . ' ' . $cliente->cognome)
+                            ->values();
+
+                        if ($partecipanti->isEmpty()) {
+                            return '';
                         }
 
-                        $count = Appuntamento::query()
-                            ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                            ->count();
-
-                        return $count > 1 ? "Condivisa ({$count})" : 'Condivisa';
+                        return $partecipanti->implode("\n");
                     })
-                    ->badge()
-                    ->color(function (Appuntamento $record) {
-                        if (! $record->sessione_condivisa_uuid) {
-                            return 'gray';
-                        }
+                    ->listWithLineBreaks()
+                    ->placeholder('-')
+                    ->color('gray')
+                    ->wrap(),
 
-                        $count = Appuntamento::query()
-                            ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                            ->count();
-
-                        return $count > 2 ? 'info' : 'warning';
-                    }),
-
-                TextColumn::make('abbonamento.servizio.nome')
+                TextColumn::make('servizio.nome')
                     ->label('Servizio')
+                    ->weight(FontWeight::SemiBold)
                     ->searchable()
                     ->sortable()
-                    ->weight(FontWeight::SemiBold)
                     ->wrap(),
 
                 TextColumn::make('tipo_partecipazione')
                     ->label('Tipo')
-                    ->state(fn (Appuntamento $record) => $record->abbonamento?->tipo_partecipazione)
                     ->badge()
                     ->formatStateUsing(fn (?string $state) => match ($state) {
                         'singolo' => 'Singolo',
@@ -86,101 +80,109 @@ class AbbonamentosTable
                         default => 'gray',
                     }),
 
-                TextColumn::make('data_ora')
-                    ->label('Data e ora')
-                    ->dateTime('d/m/Y H:i')
-                    ->sortable()
-                    ->weight(FontWeight::SemiBold),
+                TextColumn::make('utilizzo_dettaglio')
+                    ->label('Utilizzo')
+                    ->state(function (Abbonamento $record) {
+                        $totale = (int) ($record->servizio?->incontri ?? 0);
 
-                TextColumn::make('numerazione_label')
-                    ->label('Lezione')
-                    ->state(function (Appuntamento $record) {
-                        $totale = (int) ($record->abbonamento?->servizio?->incontri ?? 0);
+                        $sessioniUsate = $record->appuntamenti
+                            ->map(fn ($appuntamento) => $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id)
+                            ->unique()
+                            ->count();
 
-                        if ($totale > 0) {
-                            return "{$record->numerazione} / {$totale}";
+                        if ($totale <= 0) {
+                            return "{$sessioniUsate}\nSenza limite";
                         }
 
-                        return (string) $record->numerazione;
+                        $percentuale = min(100, (int) round(($sessioniUsate / max(1, $totale)) * 100));
+
+                        return "{$sessioniUsate} / {$totale}\n{$percentuale}% usato";
                     })
+                    ->listWithLineBreaks()
                     ->badge()
-                    ->color(function (Appuntamento $record) {
-                        $totale = (int) ($record->abbonamento?->servizio?->incontri ?? 0);
+                    ->color(function (Abbonamento $record) {
+                        $totale = (int) ($record->servizio?->incontri ?? 0);
 
                         if ($totale <= 0) {
                             return 'gray';
                         }
 
-                        $percentuale = ($record->numerazione / max(1, $totale)) * 100;
+                        $sessioniUsate = $record->appuntamenti
+                            ->map(fn ($appuntamento) => $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id)
+                            ->unique()
+                            ->count();
+
+                        $percentuale = ($sessioniUsate / max(1, $totale)) * 100;
 
                         return match (true) {
                             $percentuale >= 100 => 'danger',
-                            $percentuale >= 70 => 'warning',
+                            $percentuale >= 75 => 'warning',
                             default => 'success',
                         };
                     }),
 
-                TextColumn::make('durata')
-                    ->label('Durata')
-                    ->formatStateUsing(fn ($state) => $state . ' min')
-                    ->alignCenter(),
-
-                TextColumn::make('pt.name')
-                    ->label('PT')
-                    ->placeholder('-')
-                    ->searchable()
-                    ->toggleable(),
-
-                TextColumn::make('calendar_sync_status')
-                    ->label('Sync')
+                TextColumn::make('stato_label')
+                    ->label('Stato')
+                    ->state(fn (Abbonamento $record) => $record->terminato ? 'Terminato' : 'Attivo')
                     ->badge()
-                    ->formatStateUsing(fn (?string $state) => match ($state) {
-                        'synced' => 'Sync OK',
-                        'dirty' => 'Da aggiornare',
-                        'failed' => 'Errore',
-                        default => '-',
+                    ->color(fn (Abbonamento $record) => $record->terminato ? 'danger' : 'success')
+                    ->weight(FontWeight::SemiBold),
+
+                TextColumn::make('periodo')
+                    ->label('Periodo')
+                    ->state(function (Abbonamento $record) {
+                        $inizio = $record->data_inizio?->format('d/m/Y') ?? '-';
+                        $fine = $record->data_fine?->format('d/m/Y') ?? '-';
+
+                        return "Dal {$inizio}\nAl {$fine}";
                     })
-                    ->color(fn (?string $state) => match ($state) {
-                        'synced' => 'success',
-                        'dirty' => 'warning',
-                        'failed' => 'danger',
-                        default => 'gray',
-                    }),
+                    ->listWithLineBreaks()
+                    ->color(function (Abbonamento $record) {
+                        if (! $record->data_fine) {
+                            return 'gray';
+                        }
 
-                TextColumn::make('calendar_synced_at')
-                    ->label('Ultima sync')
-                    ->since()
-                    ->placeholder('-')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                        if ($record->terminato) {
+                            return 'danger';
+                        }
 
-                TextColumn::make('descrizione')
-                    ->label('Descrizione')
-                    ->limit(40)
-                    ->tooltip(fn (Appuntamento $record) => $record->descrizione)
-                    ->toggleable(isToggledHiddenByDefault: true),
+                        if ($record->data_fine->isPast()) {
+                            return 'danger';
+                        }
 
-                TextColumn::make('created_at')
-                    ->label('Creato')
+                        if ($record->data_fine->lte(now()->addDays(7))) {
+                            return 'warning';
+                        }
+
+                        return 'gray';
+                    })
+                    ->wrap(),
+
+                TextColumn::make('prezzo')
+                    ->label('Prezzo')
+                    ->money('EUR', locale: 'it')
+                    ->sortable()
+                    ->weight(FontWeight::SemiBold),
+
+                TextColumn::make('updated_at')
+                    ->label('Aggiornato')
                     ->since()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('tipo_partecipazione')
-                    ->label('Tipologia appuntamento')
+                    ->label('Tipo abbonamento')
                     ->options([
                         'singolo' => 'Singolo',
                         'condiviso' => 'Condiviso',
                         'gruppo' => 'Gruppo / Small group',
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        if (blank($data['value'] ?? null)) {
-                            return $query;
-                        }
+                    ]),
 
-                        return $query->whereHas('abbonamento', function (Builder $q) use ($data) {
-                            $q->where('tipo_partecipazione', $data['value']);
-                        });
-                    }),
+                TernaryFilter::make('terminato')
+                    ->label('Terminato')
+                    ->trueLabel('Terminati')
+                    ->falseLabel('Attivi')
+                    ->native(false),
 
                 SelectFilter::make('cliente_id')
                     ->label('Cliente')
@@ -189,37 +191,13 @@ class AbbonamentosTable
                     ->preload()
                     ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome),
 
-                SelectFilter::make('calendar_sync_status')
-                    ->label('Sync Google')
-                    ->options([
-                        'synced' => 'Sync OK',
-                        'dirty' => 'Da aggiornare',
-                        'failed' => 'Errore',
-                    ]),
-
-                Filter::make('data_ora')
-                    ->label('Data')
-                    ->form([
-                        \Filament\Forms\Components\DatePicker::make('data_da')
-                            ->label('Da'),
-                        \Filament\Forms\Components\DatePicker::make('data_a')
-                            ->label('A'),
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        return $query
-                            ->when(
-                                $data['data_da'] ?? null,
-                                fn (Builder $q, $date) => $q->whereDate('data_ora', '>=', $date)
-                            )
-                            ->when(
-                                $data['data_a'] ?? null,
-                                fn (Builder $q, $date) => $q->whereDate('data_ora', '<=', $date)
-                            );
-                    }),
-
-                Filter::make('sessioni_condivise')
-                    ->label('Solo sessioni condivise')
-                    ->query(fn (Builder $query): Builder => $query->whereNotNull('sessione_condivisa_uuid')),
+                Filter::make('in_scadenza')
+                    ->label('In scadenza 7 giorni')
+                    ->query(fn (Builder $query): Builder => $query
+                        ->whereNotNull('data_fine')
+                        ->whereDate('data_fine', '>=', now()->toDateString())
+                        ->whereDate('data_fine', '<=', now()->addDays(7)->toDateString())
+                    ),
             ])
             ->recordTitleAttribute('id')
             ->striped()
