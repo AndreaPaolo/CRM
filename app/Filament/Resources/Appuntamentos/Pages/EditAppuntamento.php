@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Appuntamentos\Pages;
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
 use Filament\Resources\Pages\EditRecord;
+use Illuminate\Support\Str;
 
 class EditAppuntamento extends EditRecord
 {
@@ -12,9 +13,35 @@ class EditAppuntamento extends EditRecord
 
     protected array $partecipantiSelezionati = [];
 
+    public function mount(int|string $record): void
+    {
+        parent::mount($record);
+
+        $appuntamento = $this->record->loadMissing(['abbonamento.clienti']);
+
+        $altriPartecipanti = [];
+
+        if ($appuntamento->sessione_condivisa_uuid) {
+            $altriPartecipanti = Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                ->where('id', '!=', $appuntamento->id)
+                ->pluck('cliente_id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+        }
+
+        $this->form->fill([
+            ...$this->record->attributesToArray(),
+            'cliente_id' => $appuntamento->cliente_id,
+            'abbonamento_id' => $appuntamento->abbonamento_id,
+            'clienti' => $altriPartecipanti,
+        ]);
+    }
+
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        $this->partecipantiSelezionati = $data['clienti'] ?? [];
+        $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
 
         unset($data['clienti']);
 
@@ -23,60 +50,110 @@ class EditAppuntamento extends EditRecord
 
     protected function handleRecordUpdate($record, array $data): Appuntamento
     {
-        if ($record->sessione_condivisa_uuid) {
-            $partecipanti = collect($this->partecipantiSelezionati);
+        $partecipanti = collect($this->partecipantiSelezionati);
 
-            if (! empty($data['cliente_id'])) {
-                $partecipanti->prepend($data['cliente_id']);
-            }
+        if (! empty($data['cliente_id'])) {
+            $partecipanti->prepend((int) $data['cliente_id']);
+        }
 
-            $partecipanti = $partecipanti
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
+        $partecipanti = $partecipanti
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
-            Appuntamento::query()
-                ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                ->update([
+        if (empty($partecipanti) && ! empty($data['cliente_id'])) {
+            $partecipanti = [(int) $data['cliente_id']];
+        }
+
+        // Caso: diventa o resta condiviso
+        if (count($partecipanti) > 1) {
+            $uuid = $record->sessione_condivisa_uuid ?: (string) Str::uuid();
+
+            // aggiorno tutti gli esistenti della sessione
+            if ($record->sessione_condivisa_uuid) {
+                Appuntamento::query()
+                    ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                    ->update([
+                        'abbonamento_id' => $data['abbonamento_id'],
+                        'user_id' => $data['user_id'] ?? $record->user_id,
+                        'data_ora' => $data['data_ora'],
+                        'durata' => $data['durata'],
+                        'descrizione' => $data['descrizione'] ?? null,
+                        'sessione_condivisa_uuid' => $uuid,
+                        'calendar_sync_status' => 'dirty',
+                        'calendar_last_error' => null,
+                        'updated_at' => now(),
+                    ]);
+            } else {
+                $record->update([
+                    'abbonamento_id' => $data['abbonamento_id'],
+                    'user_id' => $data['user_id'] ?? $record->user_id,
                     'data_ora' => $data['data_ora'],
                     'durata' => $data['durata'],
                     'descrizione' => $data['descrizione'] ?? null,
-                    'updated_at' => now(),
+                    'sessione_condivisa_uuid' => $uuid,
+                    'calendar_sync_status' => 'dirty',
+                    'calendar_last_error' => null,
                 ]);
+            }
 
             $esistenti = Appuntamento::query()
-                ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                ->where('sessione_condivisa_uuid', $uuid)
                 ->pluck('cliente_id')
+                ->map(fn ($id) => (int) $id)
                 ->all();
 
             $daAggiungere = array_diff($partecipanti, $esistenti);
 
             foreach ($daAggiungere as $clienteId) {
-                $payload = $data;
-                $payload['cliente_id'] = $clienteId;
-                $payload['abbonamento_id'] = $record->abbonamento_id;
-                $payload['user_id'] = $record->user_id;
-                $payload['sessione_condivisa_uuid'] = $record->sessione_condivisa_uuid;
-
-                Appuntamento::create($payload);
+                Appuntamento::create([
+                    'cliente_id' => $clienteId,
+                    'abbonamento_id' => $data['abbonamento_id'],
+                    'sessione_condivisa_uuid' => $uuid,
+                    'user_id' => $data['user_id'] ?? $record->user_id,
+                    'data_ora' => $data['data_ora'],
+                    'durata' => $data['durata'],
+                    'descrizione' => $data['descrizione'] ?? null,
+                    'numerazione' => $record->numerazione,
+                    'calendar_sync_status' => 'dirty',
+                    'calendar_last_error' => null,
+                ]);
             }
 
             $daEliminare = array_diff($esistenti, $partecipanti);
 
             if (! empty($daEliminare)) {
                 Appuntamento::query()
-                    ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                    ->where('sessione_condivisa_uuid', $uuid)
                     ->whereIn('cliente_id', $daEliminare)
                     ->delete();
             }
 
-            return $record->fresh();
+            return Appuntamento::query()->find($record->id)?->fresh() ?? $record->fresh();
         }
 
-        $record->update($data);
+        // Caso: torna singolo
+        if ($record->sessione_condivisa_uuid) {
+            Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
+                ->where('id', '!=', $record->id)
+                ->delete();
+        }
 
-        return $record;
+        $record->update([
+            'cliente_id' => $partecipanti[0] ?? $data['cliente_id'],
+            'abbonamento_id' => $data['abbonamento_id'],
+            'sessione_condivisa_uuid' => null,
+            'user_id' => $data['user_id'] ?? $record->user_id,
+            'data_ora' => $data['data_ora'],
+            'durata' => $data['durata'],
+            'descrizione' => $data['descrizione'] ?? null,
+            'calendar_sync_status' => 'dirty',
+            'calendar_last_error' => null,
+        ]);
+
+        return $record->fresh();
     }
 
     protected function afterSave(): void

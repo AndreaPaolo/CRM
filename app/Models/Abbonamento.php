@@ -80,6 +80,22 @@ class Abbonamento extends Model
                 $abbonamento->terminato_manualmente = (bool) $abbonamento->terminato;
             }
         });
+
+        static::deleting(function (Abbonamento $abbonamento) {
+            $abbonamento->loadMissing(['appuntamenti.cliente']);
+
+            $service = app(\App\Services\GoogleCalendarService::class);
+
+            foreach ($abbonamento->appuntamenti as $appuntamento) {
+                try {
+                    $service->deleteAppuntamento($appuntamento);
+                } catch (\Throwable $e) {
+                    //
+                }
+
+                $appuntamento->delete();
+            }
+        });
     }
 
     public function aggiornaStatoTerminato(): void
