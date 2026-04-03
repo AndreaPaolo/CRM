@@ -31,7 +31,8 @@ class ListAppuntamentos extends ListRecords
                         ->body("Eventi eliminati dal calendario: {$count}")
                         ->success()
                         ->send();
-            }),
+                })
+                ->visible(false),
             Actions\Action::make('syncAll')
                 ->label('Sincronizza tutto')
                 ->icon('heroicon-o-arrow-path')

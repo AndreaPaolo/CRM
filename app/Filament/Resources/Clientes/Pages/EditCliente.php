@@ -3,9 +3,11 @@
 namespace App\Filament\Resources\Clientes\Pages;
 
 use App\Filament\Resources\Clientes\ClienteResource;
+use App\Filament\Resources\Clientes\Widgets\ClienteAbbonamentoAttivoWidget;
+use App\Filament\Resources\Clientes\Widgets\ClienteAppuntamentiWidget;
+use App\Filament\Resources\Clientes\Widgets\ClienteOverviewStats;
+use App\Filament\Resources\Clientes\Widgets\ClienteStoricoAbbonamentiWidget;
 use Filament\Actions\DeleteAction;
-use Filament\Actions\ForceDeleteAction;
-use Filament\Actions\RestoreAction;
 use Filament\Resources\Pages\EditRecord;
 
 class EditCliente extends EditRecord
@@ -16,8 +18,21 @@ class EditCliente extends EditRecord
     {
         return [
             DeleteAction::make(),
-            ForceDeleteAction::make(),
-            RestoreAction::make(),
         ];
+    }
+
+    protected function getFooterWidgets(): array
+    {
+        return [
+            ClienteOverviewStats::class,
+            ClienteAbbonamentoAttivoWidget::class,
+            ClienteAppuntamentiWidget::class,
+            ClienteStoricoAbbonamentiWidget::class,
+        ];
+    }
+
+    public function getFooterWidgetsColumns(): int | array
+    {
+        return 1;
     }
 }

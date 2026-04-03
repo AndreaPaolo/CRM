@@ -13,6 +13,11 @@ class CreateAppuntamento extends CreateRecord
 
     protected array $partecipantiSelezionati = [];
 
+    protected function preserveFormDataWhenCreatingAnother(array $data): array
+    {
+        return $data;
+    }
+
     protected function mutateFormDataBeforeCreate(array $data): array
     {
         $this->partecipantiSelezionati = $data['clienti'] ?? [];
