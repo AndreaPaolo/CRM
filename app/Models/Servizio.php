@@ -16,9 +16,16 @@ class Servizio extends Model
         'descrizione',
         'durata',
         'incontri',
+        'tipo_fatturazione',
     ];
 
-    public function abbonamenti(){
+    protected $casts = [
+        'durata' => 'integer',
+        'incontri' => 'integer',
+    ];
+
+    public function abbonamenti()
+    {
         return $this->hasMany(Abbonamento::class);
     }
 }

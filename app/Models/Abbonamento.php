@@ -177,4 +177,10 @@ class Abbonamento extends Model
             }
         }
     }
+
+    public function pagamenti()
+    {
+        return $this->hasMany(\App\Models\Pagamento::class);
+    }
+
 }

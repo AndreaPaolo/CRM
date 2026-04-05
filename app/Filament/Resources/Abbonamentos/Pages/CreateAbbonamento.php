@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Abbonamentos\Pages;
 
 use App\Filament\Resources\Abbonamentos\AbbonamentoResource;
+use App\Services\PagamentoService;
 use Filament\Resources\Pages\CreateRecord;
 
 class CreateAbbonamento extends CreateRecord
@@ -25,5 +26,14 @@ class CreateAbbonamento extends CreateRecord
         if (! empty($data)) {
             $this->form->fill($data);
         }
+    }
+
+    protected function afterCreate(): void
+    {
+        app(PagamentoService::class)->generaPagamentiPacchetto(
+            $this->record,
+            (bool) ($this->data['registra_pagamento_iniziale'] ?? false),
+            $this->data['metodo_pagamento_iniziale'] ?? null
+        );
     }
 }

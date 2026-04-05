@@ -47,4 +47,10 @@ class Cliente extends Model
             ->orderByDesc('created_at')
             ->first();
     }
+
+    public function pagamenti()
+    {
+        return $this->hasMany(\App\Models\Pagamento::class);
+    }
+
 }

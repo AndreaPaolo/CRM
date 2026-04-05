@@ -2,113 +2,141 @@
 
 namespace App\Filament\Resources\Abbonamentos\Schemas;
 
+use App\Models\Servizio;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
-use Filament\Forms\Components\Section;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\Hidden;
 
 class AbbonamentoForm
 {
     public static function configure(Schema $schema): Schema
     {
-        return $schema->schema([
-                        Select::make('cliente_id')
-                            ->label('Cliente')
-                            ->relationship('cliente', 'nome')
-                            ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
-                            ->searchable()
-                            ->preload()
-                            ->required(),
+        return $schema
+            ->schema([
+                Select::make('cliente_id')
+                    ->label('Cliente')
+                    ->relationship('cliente', 'nome')
+                    ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
+                    ->searchable()
+                    ->preload()
+                    ->required(),
 
-                        Select::make('tipo_partecipazione')
-                            ->label('Tipo partecipazione')
-                            ->options([
-                                'singolo' => 'Singolo',
-                                'condiviso' => 'Condiviso',
-                                'gruppo' => 'Gruppo / Small group',
-                            ])
-                            ->default('singolo')
-                            ->required(),
-
-                        Select::make('clienti')
-                            ->label('Partecipanti')
-                            ->relationship('clienti', 'nome')
-                            ->multiple()
-                            ->searchable()
-                            ->preload()
-                            ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
-                            ->helperText('Per ora puoi mantenere anche il cliente principale. Questo campo serve per i pacchetti condivisi o di gruppo.'),
-
-                        Select::make('servizio_id')
-                            ->label('Servizio')
-                            ->relationship('servizio', 'nome')
-                            ->searchable()
-                            ->preload()
-                            ->required()
-                            ->live()
-                            ->afterStateUpdated(function ($state, callable $get, callable $set) {
-                                $dataInizio = $get('data_inizio');
-
-                                if ($state && $dataInizio) {
-                                    $servizio = \App\Models\Servizio::find($state);
-
-                                    if ($servizio) {
-                                        $set('data_fine', \Carbon\Carbon::parse($dataInizio)->addDays($servizio->durata)->format('Y-m-d'));
-                                    }
-                                }
-                            }),
-
-                        TextInput::make('prezzo')
-                            ->label('Prezzo')
-                            ->numeric()
-                            ->prefix('€')
-                            ->required(),
-
-                        TextInput::make('rate')
-                            ->label('Rate')
-                            ->numeric()
-                            ->default(1)
-                            ->minValue(1)
-                            ->required(),
-
-                        DatePicker::make('data_inizio')
-                            ->label('Data inizio')
-                            ->required()
-                            ->live()
-                            ->afterStateUpdated(function ($state, callable $get, callable $set) {
-                                $servizioId = $get('servizio_id');
-
-                                if ($state && $servizioId) {
-                                    $servizio = \App\Models\Servizio::find($servizioId);
-
-                                    if ($servizio) {
-                                        $set('data_fine', \Carbon\Carbon::parse($state)->addDays($servizio->durata)->format('Y-m-d'));
-                                    }
-                                }
-                            }),
-
-                        DatePicker::make('data_fine')
-                            ->label('Data fine')
-                            ->disabled()
-                            ->dehydrated()
-                            ->helperText('Calcolata automaticamente in base alla durata del servizio.'),
-
-                        Toggle::make('terminato')
-                            ->label('Terminato')
-                            ->live()
-                            ->afterStateUpdated(function ($state, callable $set) {
-                                $set('terminato_manualmente', (bool) $state);
-                            }),
-
-                        Hidden::make('terminato_manualmente')
-                            ->default(false),
+                Select::make('tipo_partecipazione')
+                    ->label('Tipo partecipazione')
+                    ->options([
+                        'singolo' => 'Singolo',
+                        'condiviso' => 'Condiviso',
+                        'gruppo' => 'Gruppo / Small group',
                     ])
-                    ->columns(2);
+                    ->default('singolo')
+                    ->required(),
+
+                Select::make('clienti')
+                    ->label('Partecipanti')
+                    ->relationship('clienti', 'nome')
+                    ->multiple()
+                    ->searchable()
+                    ->preload()
+                    ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
+                    ->helperText('Usa questo campo per pacchetti condivisi o di gruppo.'),
+
+                Select::make('servizio_id')
+                    ->label('Servizio')
+                    ->relationship('servizio', 'nome')
+                    ->searchable()
+                    ->preload()
+                    ->required()
+                    ->live()
+                    ->afterStateUpdated(function ($state, callable $get, callable $set) {
+                        $dataInizio = $get('data_inizio');
+
+                        if ($state && $dataInizio) {
+                            $servizio = Servizio::find($state);
+
+                            if ($servizio) {
+                                $set(
+                                    'data_fine',
+                                    \Carbon\Carbon::parse($dataInizio)
+                                        ->addDays($servizio->durata)
+                                        ->format('Y-m-d')
+                                );
+                            }
+                        }
+                    }),
+
+                TextInput::make('prezzo')
+                    ->label('Prezzo cliente')
+                    ->numeric()
+                    ->prefix('€')
+                    ->required()
+                    ->helperText('Per i mensili è il costo orario del cliente. Per i pacchetti è il totale del pacchetto.'),
+
+                TextInput::make('rate')
+                    ->label('Numero rate')
+                    ->numeric()
+                    ->default(1)
+                    ->minValue(1)
+                    ->required()
+                    ->helperText('Se > 1 il CRM genera automaticamente le rate.'),
+
+                Toggle::make('registra_pagamento_iniziale')
+                    ->label('Registra pagamento iniziale')
+                    ->default(false)
+                    ->live()
+                    ->dehydrated(false),
+
+                Select::make('metodo_pagamento_iniziale')
+                    ->label('Metodo pagamento iniziale')
+                    ->options([
+                        'contanti' => 'Contanti',
+                        'bonifico' => 'Bonifico',
+                        'carta' => 'Carta',
+                        'paypal' => 'PayPal',
+                        'altro' => 'Altro',
+                    ])
+                    ->visible(fn (callable $get) => (bool) $get('registra_pagamento_iniziale'))
+                    ->dehydrated(false),
+
+                DatePicker::make('data_inizio')
+                    ->label('Data inizio')
+                    ->required()
+                    ->live()
+                    ->afterStateUpdated(function ($state, callable $get, callable $set) {
+                        $servizioId = $get('servizio_id');
+
+                        if ($state && $servizioId) {
+                            $servizio = Servizio::find($servizioId);
+
+                            if ($servizio) {
+                                $set(
+                                    'data_fine',
+                                    \Carbon\Carbon::parse($state)
+                                        ->addDays($servizio->durata)
+                                        ->format('Y-m-d')
+                                );
+                            }
+                        }
+                    }),
+
+                DatePicker::make('data_fine')
+                    ->label('Data fine')
+                    ->disabled()
+                    ->dehydrated()
+                    ->helperText('Calcolata automaticamente in base alla durata del servizio.'),
+
+                Toggle::make('terminato')
+                    ->label('Terminato')
+                    ->live()
+                    ->afterStateUpdated(function ($state, callable $set) {
+                        $set('terminato_manualmente', (bool) $state);
+                    }),
+
+                Hidden::make('terminato_manualmente')
+                    ->default(false),
+            ])
+            ->columns(2);
     }
 }

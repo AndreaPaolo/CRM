@@ -134,8 +134,7 @@ class GoogleCalendarService
         return 'app' . str_pad((string) $appuntamento->id, 10, '0', STR_PAD_LEFT);
     }
 
-    public function deleteOrphanCalendarEvents(): int
-    {
+    public function deleteOrphanCalendarEvents(): int {
         $deleted = 0;
         $pageToken = null;
         $eventsToDelete = [];
@@ -179,4 +178,104 @@ class GoogleCalendarService
 
         return $deleted;
     }
+
+    public function syncPagamento(\App\Models\Pagamento $pagamento): void {
+        if (! $pagamento->scadenza) {
+            return;
+        }
+
+        $pagamento->loadMissing(['cliente', 'abbonamento']);
+
+        $eventId = $this->buildPagamentoEventId($pagamento);
+
+        $startDate = $pagamento->scadenza->format('Y-m-d');
+        $endDate = $pagamento->scadenza->copy()->addDay()->format('Y-m-d');
+
+        $event = new \Google\Service\Calendar\Event([
+            'id' => $eventId,
+            'summary' => $this->buildPagamentoSummary($pagamento),
+            'description' => $this->buildPagamentoDescription($pagamento),
+            'start' => [
+                'date' => $startDate,
+            ],
+            'end' => [
+                'date' => $endDate,
+            ],
+            'extendedProperties' => [
+                'private' => [
+                    'pagamento_id' => (string) $pagamento->id,
+                    'crm_source' => 'crm',
+                    'crm_type' => 'pagamento',
+                ],
+            ],
+        ]);
+
+        try {
+            try {
+                $this->calendar->events->get($this->calendarId, $eventId);
+
+                $this->calendar->events->update($this->calendarId, $eventId, $event, [
+                    'sendUpdates' => 'none',
+                ]);
+            } catch (\Throwable $e) {
+                $this->calendar->events->insert($this->calendarId, $event, [
+                    'sendUpdates' => 'none',
+                ]);
+            }
+
+            $pagamento->updateQuietly([
+                'google_calendar_event_id' => $eventId,
+                'calendar_sync_status' => 'synced',
+                'calendar_last_error' => null,
+            ]);
+        } catch (\Throwable $e) {
+            $pagamento->updateQuietly([
+                'calendar_sync_status' => 'failed',
+                'calendar_last_error' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
+    public function deletePagamento(\App\Models\Pagamento $pagamento): void {
+        $eventId = $pagamento->google_calendar_event_id ?: $this->buildPagamentoEventId($pagamento);
+
+        try {
+            $this->calendar->events->delete($this->calendarId, $eventId);
+        } catch (\Throwable $e) {
+            //
+        }
+    }
+
+    protected function buildPagamentoSummary(\App\Models\Pagamento $pagamento): string {
+        $nome = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
+
+        return match ($pagamento->tipo) {
+            'rata' => "Pagamento rata {$pagamento->numero_rata}/{$pagamento->totale_rate} - {$nome}",
+            'mensile' => "Saldo mensile - {$nome}",
+            'pacchetto' => "Pagamento pacchetto - {$nome}",
+            default => "Pagamento - {$nome}",
+        };
+    }
+
+    protected function buildPagamentoDescription(\App\Models\Pagamento $pagamento): string {
+        $righe = [
+            'Descrizione: ' . ($pagamento->descrizione ?? '-'),
+            'Importo previsto: € ' . number_format((float) $pagamento->importo_previsto, 2, ',', '.'),
+            'Importo pagato: € ' . number_format((float) $pagamento->importo_pagato, 2, ',', '.'),
+            'Stato: ' . $pagamento->stato,
+        ];
+
+        if ($pagamento->competenza_da && $pagamento->competenza_a) {
+            $righe[] = 'Competenza: ' . $pagamento->competenza_da->format('d/m/Y') . ' - ' . $pagamento->competenza_a->format('d/m/Y');
+        }
+
+        return implode("\n", $righe);
+    }
+
+    protected function buildPagamentoEventId(\App\Models\Pagamento $pagamento): string {
+        return 'pay' . str_pad((string) $pagamento->id, 10, '0', STR_PAD_LEFT);
+    }
+    
 }
