@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Clientes\Widgets;
 
+use App\Filament\Resources\Pagamentos\PagamentoResource;
 use App\Models\Pagamento;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -24,10 +25,11 @@ class ClienteProssimiPagamentiTableWidget extends TableWidget
                     ->whereIn('stato', ['da_pagare', 'parziale'])
                     ->orderBy('scadenza')
             )
+            ->recordUrl(fn (Pagamento $record): string => PagamentoResource::getUrl('edit', ['record' => $record]))
             ->paginated([5, 10])
             ->defaultPaginationPageOption(5)
             ->columns([
-                TextColumn::make('tipo')->badge(),
+                TextColumn::make('tipo')->label('Categoria')->badge(),
                 TextColumn::make('descrizione')->wrap(),
                 TextColumn::make('importo_previsto')->money('EUR', locale: 'it'),
                 TextColumn::make('importo_pagato')->money('EUR', locale: 'it'),

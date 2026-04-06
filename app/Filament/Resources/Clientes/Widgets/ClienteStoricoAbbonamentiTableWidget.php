@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Clientes\Widgets;
 
+use App\Filament\Resources\Abbonamentos\AbbonamentoResource;
 use App\Models\Abbonamento;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -23,6 +24,7 @@ class ClienteStoricoAbbonamentiTableWidget extends TableWidget
                     ? $this->record->abbonamenti()->getQuery()->with(['servizio', 'clienti'])->orderByDesc('data_inizio')
                     : Abbonamento::query()->whereRaw('1 = 0')
             )
+            ->recordUrl(fn (Abbonamento $record): string => AbbonamentoResource::getUrl('edit', ['record' => $record]))
             ->paginated([5, 10, 25])
             ->defaultPaginationPageOption(10)
             ->columns([

@@ -34,7 +34,6 @@ class PagamentoForm
 
                     return Abbonamento::query()
                         ->with(['servizio', 'clienti'])
-                        ->where('terminato', false)
                         ->where(function ($query) use ($clienteId) {
                             $query->where('cliente_id', $clienteId)
                                 ->orWhereHas('clienti', function ($q) use ($clienteId) {
@@ -47,9 +46,10 @@ class PagamentoForm
                         ->mapWithKeys(function ($abbonamento) {
                             $nomeServizio = $abbonamento->servizio?->nome ?? 'Servizio';
                             $dataInizio = $abbonamento->data_inizio?->format('d/m/Y') ?? '-';
+                            $stato = $abbonamento->terminato ? 'terminato' : 'attivo';
 
                             return [
-                                $abbonamento->id => $nomeServizio . ' | dal ' . $dataInizio,
+                                $abbonamento->id => "{$nomeServizio} | dal {$dataInizio} | {$stato}",
                             ];
                         });
                 })

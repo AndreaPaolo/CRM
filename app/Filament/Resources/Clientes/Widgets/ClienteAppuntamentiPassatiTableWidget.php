@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Clientes\Widgets;
 
+use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -25,6 +26,7 @@ class ClienteAppuntamentiPassatiTableWidget extends TableWidget
                     ->where('data_ora', '<', now())
                     ->orderByDesc('data_ora')
             )
+            ->recordUrl(fn (Appuntamento $record): string => AppuntamentoResource::getUrl('edit', ['record' => $record]))
             ->paginated([5, 10])
             ->defaultPaginationPageOption(5)
             ->columns([
