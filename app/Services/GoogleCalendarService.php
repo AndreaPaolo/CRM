@@ -180,13 +180,10 @@ class GoogleCalendarService
 
         $pagamento->loadMissing(['cliente', 'abbonamento.servizio']);
 
-        $eventId = $this->buildPagamentoEventId($pagamento);
-
         $startDate = $pagamento->scadenza->format('Y-m-d');
         $endDate = $pagamento->scadenza->copy()->addDay()->format('Y-m-d');
 
-        $event = new \Google\Service\Calendar\Event([
-            'id' => $eventId,
+        $payload = [
             'summary' => $this->buildPagamentoSummary($pagamento),
             'description' => $this->buildPagamentoDescription($pagamento),
             'start' => [
@@ -202,26 +199,39 @@ class GoogleCalendarService
                     'crm_type' => 'pagamento',
                 ],
             ],
-        ]);
+        ];
 
         try {
-            try {
-                $this->calendar->events->get($this->calendarId, $eventId);
+            if ($pagamento->google_calendar_event_id) {
+                $event = new \Google\Service\Calendar\Event($payload);
 
-                $this->calendar->events->update($this->calendarId, $eventId, $event, [
-                    'sendUpdates' => 'none',
+                $updatedEvent = $this->calendar->events->update(
+                    $this->calendarId,
+                    $pagamento->google_calendar_event_id,
+                    $event,
+                    ['sendUpdates' => 'none']
+                );
+
+                $pagamento->updateQuietly([
+                    'google_calendar_event_id' => $updatedEvent->getId(),
+                    'calendar_sync_status' => 'synced',
+                    'calendar_last_error' => null,
                 ]);
-            } catch (\Throwable $e) {
-                $this->calendar->events->insert($this->calendarId, $event, [
-                    'sendUpdates' => 'none',
+            } else {
+                $event = new \Google\Service\Calendar\Event($payload);
+
+                $createdEvent = $this->calendar->events->insert(
+                    $this->calendarId,
+                    $event,
+                    ['sendUpdates' => 'none']
+                );
+
+                $pagamento->updateQuietly([
+                    'google_calendar_event_id' => $createdEvent->getId(),
+                    'calendar_sync_status' => 'synced',
+                    'calendar_last_error' => null,
                 ]);
             }
-
-            $pagamento->updateQuietly([
-                'google_calendar_event_id' => $eventId,
-                'calendar_sync_status' => 'synced',
-                'calendar_last_error' => null,
-            ]);
         } catch (\Throwable $e) {
             $pagamento->updateQuietly([
                 'calendar_sync_status' => 'failed',
@@ -233,10 +243,12 @@ class GoogleCalendarService
     }
 
     public function deletePagamento(\App\Models\Pagamento $pagamento): void {
-        $eventId = $pagamento->google_calendar_event_id ?: $this->buildPagamentoEventId($pagamento);
+        if (! $pagamento->google_calendar_event_id) {
+            return;
+        }
 
         try {
-            $this->calendar->events->delete($this->calendarId, $eventId);
+            $this->calendar->events->delete($this->calendarId, $pagamento->google_calendar_event_id);
         } catch (\Throwable $e) {
             //
         }
@@ -279,7 +291,7 @@ class GoogleCalendarService
     }
 
     protected function buildPagamentoEventId(\App\Models\Pagamento $pagamento): string {
-        return 'pay' . str_pad((string) $pagamento->id, 10, '0', STR_PAD_LEFT);
+        return 'pay' . strtolower(base_convert((string) $pagamento->id, 10, 32));
     }
     
 }
