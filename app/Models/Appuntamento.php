@@ -42,7 +42,13 @@ class Appuntamento extends Model
     public function clienti()
     {
         return $this->belongsToMany(Cliente::class, 'appuntamento_cliente')
-            ->withTimestamps();
+            ->withTimestamps()
+            ->withPivot([
+                'google_calendar_event_id',
+                'calendar_sync_status',
+                'calendar_synced_at',
+                'calendar_last_error',
+            ]);
     }
 
     public function abbonamento()
