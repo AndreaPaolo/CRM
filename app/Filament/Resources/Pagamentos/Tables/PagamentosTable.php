@@ -4,7 +4,9 @@ namespace App\Filament\Resources\Pagamentos\Tables;
 
 use App\Models\Pagamento as PagamentoModel;
 use App\Services\GoogleCalendarService;
+use App\Services\PagamentoService;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -19,6 +21,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 
 class PagamentosTable
 {
@@ -191,6 +194,29 @@ class PagamentosTable
                     }),
             ])
             ->recordActions([
+                Action::make('ricalcola_mensile')
+                    ->label('Ricalcola mensile')
+                    ->icon('heroicon-o-calculator')
+                    ->color('info')
+                    ->visible(fn (PagamentoModel $record) => $record->tipo === 'mensile')
+                    ->action(function (PagamentoModel $record): void {
+                        try {
+                            app(PagamentoService::class)->ricalcolaPagamentoMensile($record);
+
+                            Notification::make()
+                                ->title('Mensile ricalcolato')
+                                ->body('Importo e scadenza aggiornati all’ultimo giorno del mese.')
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            Notification::make()
+                                ->title('Errore ricalcolo mensile')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
                 Action::make('segna_pagato')
                     ->label('Segna pagato')
                     ->icon('heroicon-o-banknotes')
@@ -247,6 +273,37 @@ class PagamentosTable
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
+                    BulkAction::make('ricalcola_mensili_bulk')
+                        ->label('Ricalcola mensili selezionati')
+                        ->icon('heroicon-o-calculator')
+                        ->color('info')
+                        ->requiresConfirmation()
+                        ->action(function (Collection $records): void {
+                            $ok = 0;
+                            $skip = 0;
+                            $errors = 0;
+
+                            foreach ($records as $record) {
+                                if ($record->tipo !== 'mensile') {
+                                    $skip++;
+                                    continue;
+                                }
+
+                                try {
+                                    app(PagamentoService::class)->ricalcolaPagamentoMensile($record);
+                                    $ok++;
+                                } catch (\Throwable $e) {
+                                    $errors++;
+                                }
+                            }
+
+                            Notification::make()
+                                ->title('Ricalcolo completato')
+                                ->body("Ricalcolati: {$ok} · Saltati: {$skip} · Errori: {$errors}")
+                                ->success()
+                                ->send();
+                        }),
+
                     DeleteBulkAction::make(),
                 ]),
             ]);

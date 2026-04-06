@@ -35,7 +35,7 @@ class PagamentoService
         $iniziale = min($iniziale, $prezzo);
 
         if ($rate === 1) {
-            $pagamento = \App\Models\Pagamento::create([
+            $pagamento = Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'pacchetto',
@@ -62,7 +62,7 @@ class PagamentoService
         }
 
         if ($iniziale > 0) {
-            $pagamentoIniziale = \App\Models\Pagamento::create([
+            $pagamentoIniziale = Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'rata',
@@ -103,13 +103,13 @@ class PagamentoService
 
             $numeroRata = $iniziale > 0 ? $i + 1 : $i;
 
-            \App\Models\Pagamento::create([
+            Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'rata',
                 'descrizione' => "Rata {$numeroRata}/{$rate}",
                 'importo_previsto' => $importo,
-                'scadenza' => \Carbon\Carbon::parse($abbonamento->data_inizio)->addMonths($i)->toDateString(),
+                'scadenza' => Carbon::parse($abbonamento->data_inizio)->addMonths($i)->toDateString(),
                 'stato' => 'da_pagare',
                 'importo_pagato' => 0,
                 'data_saldo' => null,
@@ -188,5 +188,52 @@ class PagamentoService
             'numero_rata' => null,
             'totale_rate' => null,
         ]);
+    }
+
+    public function ricalcolaPagamentoMensile(Pagamento $pagamento): Pagamento
+    {
+        $pagamento->loadMissing(['abbonamento.servizio', 'cliente']);
+
+        if ($pagamento->tipo !== 'mensile') {
+            throw new \RuntimeException('Questo pagamento non è di tipo mensile.');
+        }
+
+        if (! $pagamento->abbonamento) {
+            throw new \RuntimeException('Pagamento senza abbonamento collegato.');
+        }
+
+        if (($pagamento->abbonamento->servizio?->tipo_fatturazione ?? 'pacchetto') !== 'mensile') {
+            throw new \RuntimeException('L’abbonamento collegato non è un personal mensile.');
+        }
+
+        $baseDate = $pagamento->competenza_da
+            ? Carbon::parse($pagamento->competenza_da)
+            : ($pagamento->scadenza ? Carbon::parse($pagamento->scadenza) : now());
+
+        $inizioPeriodo = $baseDate->copy()->startOfMonth()->startOfDay();
+        $finePeriodo = $baseDate->copy()->endOfMonth()->endOfDay();
+
+        $costoOrarioCliente = round((float) $pagamento->abbonamento->prezzo, 2);
+
+        $appuntamenti = Appuntamento::query()
+            ->where('abbonamento_id', $pagamento->abbonamento_id)
+            ->whereBetween('data_ora', [$inizioPeriodo, $finePeriodo])
+            ->get(['id', 'durata', 'data_ora']);
+
+        $totaleMinuti = (int) $appuntamenti->sum('durata');
+        $totaleOre = round($totaleMinuti / 60, 2);
+        $importo = round($totaleOre * $costoOrarioCliente, 2);
+
+        $pagamento->update([
+            'competenza_da' => $inizioPeriodo->toDateString(),
+            'competenza_a' => $finePeriodo->toDateString(),
+            'descrizione' => 'Saldo mensile ' . $inizioPeriodo->translatedFormat('F Y'),
+            'importo_previsto' => $importo,
+            'scadenza' => $finePeriodo->toDateString(),
+            'calendar_sync_status' => 'dirty',
+            'calendar_last_error' => null,
+        ]);
+
+        return $pagamento->fresh(['cliente', 'abbonamento.servizio']);
     }
 }
