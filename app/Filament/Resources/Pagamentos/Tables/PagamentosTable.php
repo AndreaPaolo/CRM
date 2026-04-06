@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Pagamentos\Tables;
 
 use App\Models\Pagamento as PagamentoModel;
+use App\Services\GoogleCalendarService;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -11,6 +12,7 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
@@ -83,6 +85,53 @@ class PagamentosTable
                         'annullato' => 'gray',
                         default => 'gray',
                     }),
+
+                TextColumn::make('calendar_sync_status')
+                    ->label('Sync')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state) => match ($state) {
+                        'synced' => 'Sync OK',
+                        'dirty' => 'Da aggiornare',
+                        'failed' => 'Errore',
+                        default => '-',
+                    })
+                    ->color(fn (?string $state) => match ($state) {
+                        'synced' => 'success',
+                        'dirty' => 'warning',
+                        'failed' => 'danger',
+                        default => 'gray',
+                    })
+                    ->tooltip('Clicca per sincronizzare con Google Calendar')
+                    ->action(function (PagamentoModel $record): void {
+                        try {
+                            app(GoogleCalendarService::class)->syncPagamento(
+                                $record->fresh(['cliente', 'abbonamento.servizio'])
+                            );
+
+                            Notification::make()
+                                ->title('Pagamento sincronizzato')
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            $record->updateQuietly([
+                                'calendar_sync_status' => 'failed',
+                                'calendar_last_error' => $e->getMessage(),
+                            ]);
+
+                            Notification::make()
+                                ->title('Errore sincronizzazione')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
+                TextColumn::make('calendar_last_error')
+                    ->label('Errore sync')
+                    ->limit(40)
+                    ->tooltip(fn (?string $state) => $state)
+                    ->placeholder('-')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('tipo')
@@ -100,6 +149,14 @@ class PagamentosTable
                         'parziale' => 'Parziale',
                         'pagato' => 'Pagato',
                         'annullato' => 'Annullato',
+                    ]),
+
+                SelectFilter::make('calendar_sync_status')
+                    ->label('Sync calendario')
+                    ->options([
+                        'synced' => 'Sync OK',
+                        'dirty' => 'Da aggiornare',
+                        'failed' => 'Errore',
                     ]),
 
                 SelectFilter::make('cliente_id')
