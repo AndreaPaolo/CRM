@@ -35,7 +35,7 @@ class PagamentoService
         $iniziale = min($iniziale, $prezzo);
 
         if ($rate === 1) {
-            $pagamento = Pagamento::create([
+            $pagamento = \App\Models\Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'pacchetto',
@@ -45,6 +45,8 @@ class PagamentoService
                 'stato' => $iniziale >= $prezzo ? 'pagato' : ($iniziale > 0 ? 'parziale' : 'da_pagare'),
                 'importo_pagato' => $iniziale,
                 'data_saldo' => $iniziale >= $prezzo ? now()->toDateString() : null,
+                'numero_rata' => 1,
+                'totale_rate' => 1,
             ]);
 
             if ($iniziale > 0) {
@@ -60,7 +62,7 @@ class PagamentoService
         }
 
         if ($iniziale > 0) {
-            $pagamentoIniziale = Pagamento::create([
+            $pagamentoIniziale = \App\Models\Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'rata',
@@ -101,13 +103,13 @@ class PagamentoService
 
             $numeroRata = $iniziale > 0 ? $i + 1 : $i;
 
-            Pagamento::create([
+            \App\Models\Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'rata',
                 'descrizione' => "Rata {$numeroRata}/{$rate}",
                 'importo_previsto' => $importo,
-                'scadenza' => Carbon::parse($abbonamento->data_inizio)->addMonths($i)->toDateString(),
+                'scadenza' => \Carbon\Carbon::parse($abbonamento->data_inizio)->addMonths($i)->toDateString(),
                 'stato' => 'da_pagare',
                 'importo_pagato' => 0,
                 'data_saldo' => null,
