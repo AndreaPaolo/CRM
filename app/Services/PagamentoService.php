@@ -12,7 +12,8 @@ class PagamentoService
     public function generaPagamentiPacchetto(
         Abbonamento $abbonamento,
         bool $registraPagamentoIniziale = false,
-        ?string $metodoPagamentoIniziale = null
+        ?string $metodoPagamentoIniziale = null,
+        ?float $importoPagamentoIniziale = null
     ): void {
         $abbonamento->loadMissing(['servizio', 'cliente']);
 
@@ -20,12 +21,18 @@ class PagamentoService
             return;
         }
 
-        $prezzo = (float) $abbonamento->prezzo;
+        $prezzo = round((float) $abbonamento->prezzo, 2);
         $rate = max(1, (int) ($abbonamento->rate ?? 1));
 
         if ($prezzo <= 0) {
             return;
         }
+
+        $iniziale = $registraPagamentoIniziale
+            ? round((float) ($importoPagamentoIniziale ?? 0), 2)
+            : 0;
+
+        $iniziale = min($iniziale, $prezzo);
 
         if ($rate === 1) {
             $pagamento = Pagamento::create([
@@ -35,15 +42,15 @@ class PagamentoService
                 'descrizione' => 'Pagamento pacchetto',
                 'importo_previsto' => $prezzo,
                 'scadenza' => $abbonamento->data_inizio,
-                'stato' => $registraPagamentoIniziale ? 'pagato' : 'da_pagare',
-                'importo_pagato' => $registraPagamentoIniziale ? $prezzo : 0,
-                'data_saldo' => $registraPagamentoIniziale ? now()->toDateString() : null,
+                'stato' => $iniziale >= $prezzo ? 'pagato' : ($iniziale > 0 ? 'parziale' : 'da_pagare'),
+                'importo_pagato' => $iniziale,
+                'data_saldo' => $iniziale >= $prezzo ? now()->toDateString() : null,
             ]);
 
-            if ($registraPagamentoIniziale) {
+            if ($iniziale > 0) {
                 $pagamento->movimenti()->create([
                     'data_pagamento' => now()->toDateString(),
-                    'importo' => $prezzo,
+                    'importo' => $iniziale,
                     'metodo' => $metodoPagamentoIniziale,
                     'note' => 'Pagamento iniziale registrato in creazione abbonamento',
                 ]);
@@ -52,35 +59,61 @@ class PagamentoService
             return;
         }
 
-        $quota = round($prezzo / $rate, 2);
-        $totaleAssegnato = 0;
-
-        for ($i = 1; $i <= $rate; $i++) {
-            $importo = $i === $rate ? round($prezzo - $totaleAssegnato, 2) : $quota;
-            $totaleAssegnato += $importo;
-
-            $pagamento = Pagamento::create([
+        if ($iniziale > 0) {
+            $pagamentoIniziale = Pagamento::create([
                 'cliente_id' => $abbonamento->cliente_id,
                 'abbonamento_id' => $abbonamento->id,
                 'tipo' => 'rata',
-                'descrizione' => "Rata {$i}/{$rate}",
-                'importo_previsto' => $importo,
-                'scadenza' => Carbon::parse($abbonamento->data_inizio)->addMonths($i - 1)->toDateString(),
-                'stato' => ($registraPagamentoIniziale && $i === 1) ? 'pagato' : 'da_pagare',
-                'importo_pagato' => ($registraPagamentoIniziale && $i === 1) ? $importo : 0,
-                'data_saldo' => ($registraPagamentoIniziale && $i === 1) ? now()->toDateString() : null,
-                'numero_rata' => $i,
+                'descrizione' => 'Pagamento iniziale',
+                'importo_previsto' => $iniziale,
+                'scadenza' => $abbonamento->data_inizio,
+                'stato' => 'pagato',
+                'importo_pagato' => $iniziale,
+                'data_saldo' => now()->toDateString(),
+                'numero_rata' => 1,
                 'totale_rate' => $rate,
             ]);
 
-            if ($registraPagamentoIniziale && $i === 1) {
-                $pagamento->movimenti()->create([
-                    'data_pagamento' => now()->toDateString(),
-                    'importo' => $importo,
-                    'metodo' => $metodoPagamentoIniziale,
-                    'note' => 'Prima rata registrata in creazione abbonamento',
-                ]);
-            }
+            $pagamentoIniziale->movimenti()->create([
+                'data_pagamento' => now()->toDateString(),
+                'importo' => $iniziale,
+                'metodo' => $metodoPagamentoIniziale,
+                'note' => 'Pagamento iniziale registrato in creazione abbonamento',
+            ]);
+        }
+
+        $residuo = max(0, round($prezzo - $iniziale, 2));
+        $rateResidue = $iniziale > 0 ? max(1, $rate - 1) : $rate;
+
+        if ($residuo <= 0) {
+            return;
+        }
+
+        $quota = round($residuo / $rateResidue, 2);
+        $totaleAssegnato = 0;
+
+        for ($i = 1; $i <= $rateResidue; $i++) {
+            $importo = $i === $rateResidue
+                ? round($residuo - $totaleAssegnato, 2)
+                : $quota;
+
+            $totaleAssegnato += $importo;
+
+            $numeroRata = $iniziale > 0 ? $i + 1 : $i;
+
+            Pagamento::create([
+                'cliente_id' => $abbonamento->cliente_id,
+                'abbonamento_id' => $abbonamento->id,
+                'tipo' => 'rata',
+                'descrizione' => "Rata {$numeroRata}/{$rate}",
+                'importo_previsto' => $importo,
+                'scadenza' => Carbon::parse($abbonamento->data_inizio)->addMonths($i)->toDateString(),
+                'stato' => 'da_pagare',
+                'importo_pagato' => 0,
+                'data_saldo' => null,
+                'numero_rata' => $numeroRata,
+                'totale_rate' => $rate,
+            ]);
         }
     }
 

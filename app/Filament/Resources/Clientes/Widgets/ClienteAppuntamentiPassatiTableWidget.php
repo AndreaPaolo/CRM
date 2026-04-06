@@ -25,35 +25,14 @@ class ClienteAppuntamentiPassatiTableWidget extends TableWidget
                     ->where('data_ora', '<', now())
                     ->orderByDesc('data_ora')
             )
-            ->paginated([5, 10, 25])
+            ->paginated([5, 10])
             ->defaultPaginationPageOption(5)
             ->columns([
-                TextColumn::make('data_ora')
-                    ->label('Data e ora')
-                    ->dateTime('d/m/Y H:i')
-                    ->sortable()
-                    ->weight('bold'),
-
-                TextColumn::make('abbonamento.servizio.nome')
-                    ->label('Servizio')
-                    ->wrap(),
-
-                TextColumn::make('numerazione')
-                    ->label('Lezione')
-                    ->state(function (Appuntamento $record) {
-                        $totale = (int) ($record->abbonamento?->servizio?->incontri ?? 0);
-                        return $totale > 0 ? "{$record->numerazione} / {$totale}" : (string) $record->numerazione;
-                    })
-                    ->badge()
-                    ->color('gray'),
-
-                TextColumn::make('durata')
-                    ->label('Durata')
-                    ->formatStateUsing(fn ($state) => $state . ' min'),
-
-                TextColumn::make('pt.name')
-                    ->label('PT')
-                    ->placeholder('-'),
+                TextColumn::make('data_ora')->dateTime('d/m/Y H:i')->weight('bold'),
+                TextColumn::make('abbonamento.servizio.nome')->label('Servizio')->wrap(),
+                TextColumn::make('numerazione')->label('Lezione'),
+                TextColumn::make('durata')->formatStateUsing(fn ($state) => $state . ' min'),
+                TextColumn::make('pt.name')->label('PT')->placeholder('-'),
             ]);
     }
 }

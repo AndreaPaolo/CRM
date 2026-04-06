@@ -8,8 +8,8 @@ use App\Filament\Resources\Clientes\ClienteResource;
 use App\Filament\Resources\Clientes\Widgets\ClienteAbbonamentoAttivoWidget;
 use App\Filament\Resources\Clientes\Widgets\ClienteAppuntamentiPassatiTableWidget;
 use App\Filament\Resources\Clientes\Widgets\ClienteAppuntamentiProssimiTableWidget;
-use App\Filament\Resources\Clientes\Widgets\ClienteNoteWidget;
-use App\Filament\Resources\Clientes\Widgets\ClienteOverviewStats;
+use App\Filament\Resources\Clientes\Widgets\ClientePagamentiPassatiTableWidget;
+use App\Filament\Resources\Clientes\Widgets\ClienteProssimiPagamentiTableWidget;
 use App\Filament\Resources\Clientes\Widgets\ClienteStoricoAbbonamentiTableWidget;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
@@ -47,10 +47,6 @@ class EditCliente extends EditRecord
             }
         }
 
-        $queryAbbonamento = [
-            'cliente_id' => $cliente->id,
-        ];
-
         return [
             Action::make('nuovoAppuntamento')
                 ->label('Nuovo appuntamento')
@@ -62,7 +58,7 @@ class EditCliente extends EditRecord
                 ->label('Nuovo abbonamento')
                 ->icon('heroicon-o-rectangle-stack')
                 ->color('success')
-                ->url(fn () => AbbonamentoResource::getUrl('create', ['tenant' => null]) . '?' . http_build_query($queryAbbonamento)),
+                ->url(fn () => AbbonamentoResource::getUrl('create', ['tenant' => null]) . '?cliente_id=' . $cliente->id),
 
             Action::make('whatsapp')
                 ->label('WhatsApp')
@@ -86,10 +82,10 @@ class EditCliente extends EditRecord
     protected function getFooterWidgets(): array
     {
         return [
-            ClienteOverviewStats::class,
             ClienteAbbonamentoAttivoWidget::class,
-            ClienteNoteWidget::class,
+            ClienteProssimiPagamentiTableWidget::class,
             ClienteAppuntamentiProssimiTableWidget::class,
+            ClientePagamentiPassatiTableWidget::class,
             ClienteAppuntamentiPassatiTableWidget::class,
             ClienteStoricoAbbonamentiTableWidget::class,
         ];

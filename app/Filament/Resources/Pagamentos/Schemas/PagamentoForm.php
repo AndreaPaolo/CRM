@@ -5,51 +5,60 @@ namespace App\Filament\Resources\Pagamentos\Schemas;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Select;
 use Filament\Schemas\Schema;
 
 class PagamentoForm
 {
     public static function configure(Schema $schema): Schema
     {
-        return $schema
-            ->components([
-                TextInput::make('cliente_id')
-                    ->required()
-                    ->numeric(),
-                TextInput::make('abbonamento_id')
-                    ->numeric()
-                    ->default(null),
-                TextInput::make('tipo')
-                    ->required(),
-                DatePicker::make('competenza_da'),
-                DatePicker::make('competenza_a'),
-                TextInput::make('descrizione')
-                    ->default(null),
-                TextInput::make('importo_previsto')
-                    ->required()
-                    ->numeric(),
-                TextInput::make('importo_pagato')
-                    ->required()
-                    ->numeric()
-                    ->default(0.0),
-                DatePicker::make('scadenza'),
-                DatePicker::make('data_saldo'),
-                TextInput::make('stato')
-                    ->required()
-                    ->default('da_pagare'),
-                TextInput::make('numero_rata')
-                    ->numeric()
-                    ->default(null),
-                TextInput::make('totale_rate')
-                    ->numeric()
-                    ->default(null),
-                TextInput::make('google_calendar_event_id')
-                    ->default(null),
-                TextInput::make('calendar_sync_status')
-                    ->default(null),
-                Textarea::make('calendar_last_error')
-                    ->default(null)
-                    ->columnSpanFull(),
-            ]);
+        return $schema->components([
+            Select::make('cliente_id')
+                ->label('Cliente')
+                ->relationship('cliente', 'nome')
+                ->searchable()
+                ->preload()
+                ->required()
+                ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome),
+
+            Select::make('abbonamento_id')
+                ->label('Abbonamento')
+                ->relationship('abbonamento', 'id')
+                ->searchable()
+                ->preload(),
+
+            Select::make('tipo')
+                ->options([
+                    'pacchetto' => 'Pacchetto',
+                    'rata' => 'Rata',
+                    'mensile' => 'Mensile',
+                ])
+                ->required(),
+
+            TextInput::make('descrizione')
+                ->required(),
+
+            TextInput::make('importo_previsto')
+                ->numeric()
+                ->required(),
+
+            TextInput::make('importo_pagato')
+                ->numeric()
+                ->default(0)
+                ->required(),
+
+            DatePicker::make('scadenza'),
+
+            DatePicker::make('data_saldo'),
+
+            Select::make('stato')
+                ->options([
+                    'da_pagare' => 'Da pagare',
+                    'parziale' => 'Parziale',
+                    'pagato' => 'Pagato',
+                    'annullato' => 'Annullato',
+                ])
+                ->required(),
+        ]);
     }
 }

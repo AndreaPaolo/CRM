@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Clientes\Widgets;
 
+use App\Models\Appuntamento;
 use Filament\Widgets\Widget;
 
 class ClienteAbbonamentoAttivoWidget extends Widget
@@ -17,8 +18,8 @@ class ClienteAbbonamentoAttivoWidget extends Widget
         $cliente = $this->record;
 
         $abbonamento = $cliente?->abbonamenti()
-            ->with(['servizio', 'clienti', 'appuntamenti'])
-            ->orderByRaw('CASE WHEN terminato = 0 THEN 0 ELSE 1 END')
+            ->with(['servizio', 'clienti'])
+            ->where('terminato', false)
             ->orderByDesc('data_inizio')
             ->first();
 
@@ -28,7 +29,9 @@ class ClienteAbbonamentoAttivoWidget extends Widget
         $statoColor = 'gray';
 
         if ($abbonamento) {
-            $sessioniUsate = $abbonamento->appuntamenti
+            $sessioniUsate = Appuntamento::query()
+                ->where('abbonamento_id', $abbonamento->id)
+                ->get(['id', 'sessione_condivisa_uuid'])
                 ->map(fn ($appuntamento) => $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id)
                 ->unique()
                 ->count();

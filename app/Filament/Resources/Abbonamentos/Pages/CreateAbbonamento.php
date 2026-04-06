@@ -33,7 +33,10 @@ class CreateAbbonamento extends CreateRecord
         app(PagamentoService::class)->generaPagamentiPacchetto(
             $this->record,
             (bool) ($this->data['registra_pagamento_iniziale'] ?? false),
-            $this->data['metodo_pagamento_iniziale'] ?? null
+            $this->data['metodo_pagamento_iniziale'] ?? null,
+            isset($this->data['importo_pagamento_iniziale'])
+                ? (float) $this->data['importo_pagamento_iniziale']
+                : null,
         );
     }
 }
