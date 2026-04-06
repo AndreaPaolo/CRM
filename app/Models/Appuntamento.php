@@ -39,6 +39,12 @@ class Appuntamento extends Model
         return $this->belongsTo(Cliente::class);
     }
 
+    public function clienti()
+    {
+        return $this->belongsToMany(Cliente::class, 'appuntamento_cliente')
+            ->withTimestamps();
+    }
+
     public function abbonamento()
     {
         return $this->belongsTo(Abbonamento::class);

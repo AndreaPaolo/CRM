@@ -254,13 +254,16 @@ class GoogleCalendarService
         }
     }
 
-    protected function buildPagamentoSummary(\App\Models\Pagamento $pagamento): string {
+    protected function buildPagamentoSummary(\App\Models\Pagamento $pagamento): string
+    {
         $nome = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
         $servizio = $pagamento->abbonamento?->servizio?->nome ?? 'Abbonamento';
         $importo = number_format((float) $pagamento->importo_previsto, 0, ',', '.');
 
         $bloccoTipo = match ($pagamento->tipo) {
-            'rata' => 'rata ' . ($pagamento->numero_rata ?? '?') . '/' . ($pagamento->totale_rate ?? '?'),
+            'rata' => $pagamento->numero_rata && $pagamento->totale_rate
+                ? 'rata ' . $pagamento->numero_rata . '/' . $pagamento->totale_rate
+                : 'rata',
             'mensile' => 'saldo mensile',
             'pacchetto' => 'pacchetto',
             default => 'pagamento',
@@ -269,7 +272,8 @@ class GoogleCalendarService
         return "{$nome}: {$bloccoTipo} {$importo}€ ({$servizio}) - {$pagamento->stato}";
     }
 
-    protected function buildPagamentoDescription(\App\Models\Pagamento $pagamento): string {
+    protected function buildPagamentoDescription(\App\Models\Pagamento $pagamento): string
+    {
         $righe = [
             'Cliente: ' . trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? '')),
             'Servizio: ' . ($pagamento->abbonamento?->servizio?->nome ?? '-'),
@@ -280,7 +284,7 @@ class GoogleCalendarService
         ];
 
         if ($pagamento->competenza_da && $pagamento->competenza_a) {
-            $righe[] = 'Competenza: ' . $pagamento->competenza_da->format('d/m/Y') . ' - ' . $pagamento->competenza_a->format('d/m/Y');
+            $righe[] = 'Periodo: ' . $pagamento->competenza_da->format('d/m/Y') . ' - ' . $pagamento->competenza_a->format('d/m/Y');
         }
 
         if ($pagamento->scadenza) {

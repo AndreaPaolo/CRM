@@ -130,25 +130,26 @@ class PagamentoService
             return null;
         }
 
-        $costoOrarioCliente = (float) $abbonamento->prezzo;
+        $costoOrarioCliente = round((float) $abbonamento->prezzo, 2);
 
         if ($costoOrarioCliente <= 0) {
             return null;
         }
 
+        $inizioPeriodo = $inizioPeriodo->copy()->startOfMonth()->startOfDay();
+        $finePeriodo = $finePeriodo->copy()->endOfMonth()->endOfDay();
+
         $appuntamenti = Appuntamento::query()
             ->where('abbonamento_id', $abbonamento->id)
-            ->whereBetween('data_ora', [
-                $inizioPeriodo->copy()->startOfDay(),
-                $finePeriodo->copy()->endOfDay(),
-            ])
-            ->get();
+            ->whereBetween('data_ora', [$inizioPeriodo, $finePeriodo])
+            ->get(['id', 'durata', 'data_ora']);
 
         if ($appuntamenti->isEmpty()) {
             return null;
         }
 
-        $totaleOre = $appuntamenti->sum('durata') / 60;
+        $totaleMinuti = (int) $appuntamenti->sum('durata');
+        $totaleOre = round($totaleMinuti / 60, 2);
         $importo = round($totaleOre * $costoOrarioCliente, 2);
 
         if ($importo <= 0) {
@@ -163,7 +164,15 @@ class PagamentoService
             ->first();
 
         if ($esistente) {
-            return $esistente;
+            $esistente->updateQuietly([
+                'descrizione' => 'Saldo mensile ' . $inizioPeriodo->translatedFormat('F Y'),
+                'importo_previsto' => $importo,
+                'scadenza' => $finePeriodo->toDateString(),
+                'calendar_sync_status' => 'dirty',
+                'calendar_last_error' => null,
+            ]);
+
+            return $esistente->fresh();
         }
 
         return Pagamento::create([
@@ -176,6 +185,8 @@ class PagamentoService
             'importo_previsto' => $importo,
             'scadenza' => $finePeriodo->toDateString(),
             'stato' => 'da_pagare',
+            'numero_rata' => null,
+            'totale_rate' => null,
         ]);
     }
 }

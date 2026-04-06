@@ -23,11 +23,10 @@ class GeneraPagamentiMensili extends Command
 
         $abbonamenti = Abbonamento::query()
             ->with(['servizio', 'cliente'])
-            ->where('terminato', false)
             ->whereHas('servizio', fn ($q) => $q->where('tipo_fatturazione', 'mensile'))
             ->get();
 
-        $creati = 0;
+        $creatiOAggiornati = 0;
 
         foreach ($abbonamenti as $abbonamento) {
             $pagamento = $pagamentoService->generaPagamentoMensile(
@@ -37,11 +36,11 @@ class GeneraPagamentiMensili extends Command
             );
 
             if ($pagamento) {
-                $creati++;
+                $creatiOAggiornati++;
             }
         }
 
-        $this->info("Pagamenti mensili creati: {$creati}");
+        $this->info("Pagamenti mensili creati/aggiornati: {$creatiOAggiornati}");
 
         return self::SUCCESS;
     }
