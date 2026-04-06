@@ -2,7 +2,7 @@
 
 namespace App\Filament\Resources\Pagamentos\Tables;
 
-use App\Models\Pagamento;
+use App\Models\Pagamento as PagamentoModel;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -33,7 +33,7 @@ class PagamentosTable
             ->columns([
                 TextColumn::make('cliente_nome')
                     ->label('Cliente')
-                    ->state(fn (Pagamento $record) => trim(($record->cliente?->nome ?? '') . ' ' . ($record->cliente?->cognome ?? '')))
+                    ->state(fn (PagamentoModel $record) => trim(($record->cliente?->nome ?? '') . ' ' . ($record->cliente?->cognome ?? '')))
                     ->searchable(query: function (Builder $query, string $search): Builder {
                         return $query->whereHas('cliente', function (Builder $q) use ($search) {
                             $q->where('nome', 'like', "%{$search}%")
@@ -138,8 +138,8 @@ class PagamentosTable
                     ->label('Segna pagato')
                     ->icon('heroicon-o-banknotes')
                     ->color('success')
-                    ->visible(fn (Pagamento $record) => ! in_array($record->stato, ['pagato', 'annullato'], true))
-                    ->fillForm(function (Pagamento $record): array {
+                    ->visible(fn (PagamentoModel $record) => ! in_array($record->stato, ['pagato', 'annullato'], true))
+                    ->fillForm(function (PagamentoModel $record): array {
                         $residuo = max(0, round((float) $record->importo_previsto - (float) $record->importo_pagato, 2));
 
                         return [
@@ -176,7 +176,7 @@ class PagamentosTable
                             ->label('Note')
                             ->rows(3),
                     ])
-                    ->action(function (Pagamento $record, array $data): void {
+                    ->action(function (PagamentoModel $record, array $data): void {
                         $record->movimenti()->create([
                             'data_pagamento' => $data['data_pagamento'],
                             'importo' => $data['importo'],

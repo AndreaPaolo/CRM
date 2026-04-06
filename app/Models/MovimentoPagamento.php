@@ -35,7 +35,7 @@ class MovimentoPagamento extends Model
                 return;
             }
 
-            $totalePagato = $pagamento->movimenti()->sum('importo');
+            $totalePagato = (float) $pagamento->movimenti()->sum('importo');
 
             $pagamento->importo_pagato = $totalePagato;
             $pagamento->aggiornaStato();
@@ -48,7 +48,7 @@ class MovimentoPagamento extends Model
                 return;
             }
 
-            $totalePagato = $pagamento->movimenti()->sum('importo');
+            $totalePagato = (float) $pagamento->movimenti()->sum('importo');
 
             $pagamento->importo_pagato = $totalePagato;
             $pagamento->aggiornaStato();

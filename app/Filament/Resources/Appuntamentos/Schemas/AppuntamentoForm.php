@@ -23,7 +23,7 @@ class AppuntamentoForm
                     ->default(fn () => Auth::id()),
 
                 Select::make('cliente_id')
-                    ->label('Cliente principale')
+                    ->label('Cliente')
                     ->relationship('cliente', 'nome')
                     ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome)
                     ->searchable()
@@ -35,6 +35,14 @@ class AppuntamentoForm
                         $set('clienti', []);
                     }),
 
+                Select::make('clienti')
+                    ->label('Partecipanti')
+                    ->relationship('clienti', 'nome')
+                    ->multiple()
+                    ->preload()
+                    ->searchable()
+                    ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome),
+
                 Select::make('abbonamento_id')
                     ->label('Abbonamento')
                     ->options(function (callable $get) {
@@ -45,13 +53,14 @@ class AppuntamentoForm
                         }
 
                         return Abbonamento::query()
+                            ->with(['servizio', 'clienti'])
+                            ->where('terminato', false)
                             ->where(function ($query) use ($clienteId) {
                                 $query->where('cliente_id', $clienteId)
                                     ->orWhereHas('clienti', function ($q) use ($clienteId) {
-                                        $q->whereKey($clienteId);
+                                        $q->where('cliente.id', $clienteId);
                                     });
                             })
-                            ->with('servizio')
                             ->orderByDesc('data_inizio')
                             ->orderByDesc('created_at')
                             ->get()
@@ -61,78 +70,14 @@ class AppuntamentoForm
                                 return [
                                     $abbonamento->id => $nomeServizio . ' | dal ' . optional($abbonamento->data_inizio)->format('d/m/Y'),
                                 ];
-                            })
-                            ->toArray();
+                            });
                     })
                     ->searchable()
                     ->preload()
                     ->required()
                     ->live()
-                    ->afterStateUpdated(fn (callable $set) => $set('clienti', [])),
-
-                Select::make('clienti')
-                    ->label('Altri partecipanti')
-                    ->multiple()
-                    ->options(function (callable $get) {
-                        $abbonamentoId = $get('abbonamento_id');
-
-                        if (! $abbonamentoId) {
-                            return [];
-                        }
-
-                        $abbonamento = Abbonamento::with('clienti')->find($abbonamentoId);
-
-                        if (! $abbonamento) {
-                            return [];
-                        }
-
-                        $clientePrincipale = $get('cliente_id');
-
-                        return $abbonamento->clienti
-                            ->filter(fn ($cliente) => (int) $cliente->id !== (int) $clientePrincipale)
-                            ->mapWithKeys(function ($cliente) {
-                                return [
-                                    $cliente->id => $cliente->nome . ' ' . $cliente->cognome,
-                                ];
-                            })
-                            ->toArray();
-                    })
-                    ->searchable()
-                    ->preload()
-                    ->required(function (callable $get) {
-                        $abbonamentoId = $get('abbonamento_id');
-
-                        if (! $abbonamentoId) {
-                            return false;
-                        }
-
-                        $abbonamento = Abbonamento::find($abbonamentoId);
-
-                        if (! $abbonamento) {
-                            return false;
-                        }
-
-                        return $abbonamento->tipo_partecipazione === 'gruppo';
-                    })
-                    ->helperText(function (callable $get) {
-                        $abbonamentoId = $get('abbonamento_id');
-
-                        if (! $abbonamentoId) {
-                            return 'Seleziona prima un abbonamento.';
-                        }
-
-                        $abbonamento = Abbonamento::find($abbonamentoId);
-
-                        if (! $abbonamento) {
-                            return null;
-                        }
-
-                        return match ($abbonamento->tipo_partecipazione) {
-                            'gruppo' => 'Per lo small group seleziona tutti gli altri partecipanti della lezione.',
-                            'condiviso' => 'Per il pacchetto condiviso puoi lasciarlo vuoto.',
-                            default => null,
-                        };
-                    }),
+                    ->disabled(fn (callable $get) => blank($get('cliente_id')))
+                    ->placeholder('Seleziona prima il cliente'),
 
                 Placeholder::make('anteprima_numerazione')
                     ->label('Numerazione')
@@ -152,9 +97,7 @@ class AppuntamentoForm
                         $prossimoNumero = (Appuntamento::where('abbonamento_id', $abbonamentoId)->max('numerazione') ?? 0) + 1;
                         $totale = $abbonamento->servizio->incontri;
 
-                        return (int) $totale > 0
-                            ? 'Lezione ' . $prossimoNumero . ' / ' . $totale
-                            : 'Lezione ' . $prossimoNumero;
+                        return 'Lezione ' . $prossimoNumero . ' / ' . $totale;
                     }),
 
                 DateTimePicker::make('data_ora')

@@ -14,8 +14,7 @@ class GoogleCalendarService
     protected Calendar $calendar;
     protected string $calendarId;
 
-    public function __construct()
-    {
+    public function __construct() {
         $client = new Client();
         $client->setApplicationName(config('app.name'));
         $client->setScopes([Calendar::CALENDAR]);
@@ -31,8 +30,7 @@ class GoogleCalendarService
         $this->calendarId = config('services.google.calendar_id');
     }
 
-    public function syncAppuntamento(Appuntamento $appuntamento): void
-    {
+    public function syncAppuntamento(Appuntamento $appuntamento): void {
         $eventId = $this->buildEventId($appuntamento);
 
         $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
@@ -97,8 +95,7 @@ class GoogleCalendarService
         }
     }
 
-    public function deleteAppuntamento(Appuntamento $appuntamento): void
-    {
+    public function deleteAppuntamento(Appuntamento $appuntamento): void {
         $eventId = $appuntamento->google_calendar_event_id ?: $this->buildEventId($appuntamento);
 
         try {
@@ -108,8 +105,7 @@ class GoogleCalendarService
         }
     }
 
-    protected function buildSummary(Appuntamento $appuntamento): string
-    {
+    protected function buildSummary(Appuntamento $appuntamento): string {
         $cliente = $appuntamento->cliente;
         $pt = $appuntamento->pt?->name ?? 'PT';
         $totale = $appuntamento->abbonamento?->servizio?->incontri ?? 0;
@@ -124,13 +120,11 @@ class GoogleCalendarService
         );
     }
 
-    protected function buildDescription(Appuntamento $appuntamento): string
-    {
+    protected function buildDescription(Appuntamento $appuntamento): string {
         return $appuntamento->descrizione ?: 'Appuntamento CRM';
     }
 
-    protected function buildEventId(Appuntamento $appuntamento): string
-    {
+    protected function buildEventId(Appuntamento $appuntamento): string {
         return 'app' . str_pad((string) $appuntamento->id, 10, '0', STR_PAD_LEFT);
     }
 
@@ -184,7 +178,7 @@ class GoogleCalendarService
             return;
         }
 
-        $pagamento->loadMissing(['cliente', 'abbonamento']);
+        $pagamento->loadMissing(['cliente', 'abbonamento.servizio']);
 
         $eventId = $this->buildPagamentoEventId($pagamento);
 
@@ -250,17 +244,23 @@ class GoogleCalendarService
 
     protected function buildPagamentoSummary(\App\Models\Pagamento $pagamento): string {
         $nome = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
+        $servizio = $pagamento->abbonamento?->servizio?->nome ?? 'Abbonamento';
+        $importo = number_format((float) $pagamento->importo_previsto, 0, ',', '.');
 
-        return match ($pagamento->tipo) {
-            'rata' => "Pagamento rata {$pagamento->numero_rata}/{$pagamento->totale_rate} - {$nome}",
-            'mensile' => "Saldo mensile - {$nome}",
-            'pacchetto' => "Pagamento pacchetto - {$nome}",
-            default => "Pagamento - {$nome}",
+        $bloccoTipo = match ($pagamento->tipo) {
+            'rata' => 'rata ' . ($pagamento->numero_rata ?? '?') . '/' . ($pagamento->totale_rate ?? '?'),
+            'mensile' => 'saldo mensile',
+            'pacchetto' => 'pacchetto',
+            default => 'pagamento',
         };
+
+        return "{$nome}: {$bloccoTipo} {$importo}€ ({$servizio}) - {$pagamento->stato}";
     }
 
     protected function buildPagamentoDescription(\App\Models\Pagamento $pagamento): string {
         $righe = [
+            'Cliente: ' . trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? '')),
+            'Servizio: ' . ($pagamento->abbonamento?->servizio?->nome ?? '-'),
             'Descrizione: ' . ($pagamento->descrizione ?? '-'),
             'Importo previsto: € ' . number_format((float) $pagamento->importo_previsto, 2, ',', '.'),
             'Importo pagato: € ' . number_format((float) $pagamento->importo_pagato, 2, ',', '.'),
@@ -269,6 +269,10 @@ class GoogleCalendarService
 
         if ($pagamento->competenza_da && $pagamento->competenza_a) {
             $righe[] = 'Competenza: ' . $pagamento->competenza_da->format('d/m/Y') . ' - ' . $pagamento->competenza_a->format('d/m/Y');
+        }
+
+        if ($pagamento->scadenza) {
+            $righe[] = 'Scadenza: ' . $pagamento->scadenza->format('d/m/Y');
         }
 
         return implode("\n", $righe);

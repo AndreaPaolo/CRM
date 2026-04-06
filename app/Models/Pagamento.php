@@ -70,10 +70,36 @@ class Pagamento extends Model
 
     protected static function booted(): void
     {
+        static::creating(function (Pagamento $pagamento) {
+            $pagamento->calendar_sync_status = 'dirty';
+            $pagamento->calendar_last_error = null;
+        });
+
+        static::updating(function (Pagamento $pagamento) {
+            if ($pagamento->isDirty([
+                'cliente_id',
+                'abbonamento_id',
+                'tipo',
+                'competenza_da',
+                'competenza_a',
+                'descrizione',
+                'importo_previsto',
+                'importo_pagato',
+                'scadenza',
+                'data_saldo',
+                'stato',
+                'numero_rata',
+                'totale_rate',
+            ])) {
+                $pagamento->calendar_sync_status = 'dirty';
+                $pagamento->calendar_last_error = null;
+            }
+        });
+
         static::saved(function (Pagamento $pagamento) {
             try {
                 app(GoogleCalendarService::class)->syncPagamento(
-                    $pagamento->fresh(['cliente', 'abbonamento'])
+                    $pagamento->fresh(['cliente', 'abbonamento.servizio'])
                 );
             } catch (\Throwable $e) {
                 $pagamento->updateQuietly([
