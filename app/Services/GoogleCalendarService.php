@@ -30,66 +30,110 @@ class GoogleCalendarService
         $this->calendarId = config('services.google.calendar_id');
     }
 
-    public function syncAppuntamento(Appuntamento $appuntamento): void {
-        $eventId = $this->buildEventId($appuntamento);
+    public function syncAppuntamento(\App\Models\Appuntamento $appuntamento): void
+    {
+        $appuntamento->loadMissing(['cliente', 'abbonamento.servizio', 'pt']);
 
-        $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
-        $endAt = $startAt->copy()->addMinutes($appuntamento->durata);
+        $eventId = $appuntamento->google_calendar_event_id ?: $this->buildEventId($appuntamento);
 
-        $attendees = [];
+        $isAllDay = (bool) $appuntamento->evento_intera_giornata;
+        $shouldCreateMeet = $this->shouldCreateMeet($appuntamento);
 
-        if (! empty($appuntamento->cliente?->email) && filter_var($appuntamento->cliente->email, FILTER_VALIDATE_EMAIL)) {
-            $attendees[] = [
-                'email' => $appuntamento->cliente->email,
-                'displayName' => $appuntamento->cliente->nome . ' ' . $appuntamento->cliente->cognome,
-            ];
-        }
-
-        $event = new Event([
-            'id' => $eventId,
+        $payload = [
             'summary' => $this->buildSummary($appuntamento),
             'description' => $this->buildDescription($appuntamento),
-            'start' => new EventDateTime([
-                'dateTime' => $startAt->format('c'),
-                'timeZone' => 'Europe/Rome',
-            ]),
-            'end' => new EventDateTime([
-                'dateTime' => $endAt->format('c'),
-                'timeZone' => 'Europe/Rome',
-            ]),
-            'attendees' => $attendees,
             'extendedProperties' => [
                 'private' => [
                     'appuntamento_id' => (string) $appuntamento->id,
                     'crm_source' => 'crm',
                 ],
             ],
-        ]);
+        ];
+
+        if ($isAllDay) {
+            $startDate = $appuntamento->data_ora->copy()->startOfDay()->format('Y-m-d');
+            $endDate = $appuntamento->data_ora->copy()->addDay()->startOfDay()->format('Y-m-d');
+
+            $payload['start'] = ['date' => $startDate];
+            $payload['end'] = ['date' => $endDate];
+        } else {
+            $startAt = $appuntamento->data_ora->copy()->setTimezone('Europe/Rome');
+            $endAt = $startAt->copy()->addMinutes($appuntamento->durata);
+
+            $payload['start'] = [
+                'dateTime' => $startAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ];
+            $payload['end'] = [
+                'dateTime' => $endAt->format('c'),
+                'timeZone' => 'Europe/Rome',
+            ];
+        }
+
+        $attendees = [];
+        if (! empty($appuntamento->cliente?->email) && filter_var($appuntamento->cliente->email, FILTER_VALIDATE_EMAIL)) {
+            $attendees[] = [
+                'email' => $appuntamento->cliente->email,
+                'displayName' => trim(($appuntamento->cliente->nome ?? '') . ' ' . ($appuntamento->cliente->cognome ?? '')),
+            ];
+        }
+        $payload['attendees'] = $attendees;
+
+        if ($shouldCreateMeet) {
+            $payload['conferenceData'] = [
+                'createRequest' => [
+                    'requestId' => 'meet-app-' . $appuntamento->id . '-' . now()->timestamp,
+                    'conferenceSolutionKey' => [
+                        'type' => 'hangoutsMeet',
+                    ],
+                ],
+            ];
+        }
 
         try {
-            try {
-                $this->calendar->events->get($this->calendarId, $eventId);
+            $event = new \Google\Service\Calendar\Event($payload);
 
-                $this->calendar->events->update($this->calendarId, $eventId, $event, [
-                    'sendUpdates' => 'none',
+            if ($appuntamento->google_calendar_event_id) {
+                $updatedEvent = $this->calendar->events->update(
+                    $this->calendarId,
+                    $appuntamento->google_calendar_event_id,
+                    $event,
+                    [
+                        'sendUpdates' => 'all',
+                        'conferenceDataVersion' => $shouldCreateMeet ? 1 : 0,
+                    ]
+                );
+
+                $appuntamento->updateQuietly([
+                    'google_calendar_event_id' => $updatedEvent->getId(),
+                    'google_meet_link' => $updatedEvent->getHangoutLink(),
+                    'calendar_sync_status' => 'synced',
+                    'calendar_synced_at' => now(),
+                    'calendar_last_error' => null,
                 ]);
-            } catch (Throwable $e) {
-                $this->calendar->events->insert($this->calendarId, $event, [
-                    'sendUpdates' => 'none',
+            } else {
+                $createdEvent = $this->calendar->events->insert(
+                    $this->calendarId,
+                    $event,
+                    [
+                        'sendUpdates' => 'all',
+                        'conferenceDataVersion' => $shouldCreateMeet ? 1 : 0,
+                    ]
+                );
+
+                $appuntamento->updateQuietly([
+                    'google_calendar_event_id' => $createdEvent->getId(),
+                    'google_meet_link' => $createdEvent->getHangoutLink(),
+                    'calendar_sync_status' => 'synced',
+                    'calendar_synced_at' => now(),
+                    'calendar_last_error' => null,
                 ]);
             }
-
-            $appuntamento->forceFill([
-                'google_calendar_event_id' => $eventId,
-                'calendar_sync_status' => 'synced',
-                'calendar_synced_at' => now(),
-                'calendar_last_error' => null,
-            ])->saveQuietly();
-        } catch (Throwable $e) {
-            $appuntamento->forceFill([
+        } catch (\Throwable $e) {
+            $appuntamento->updateQuietly([
                 'calendar_sync_status' => 'failed',
                 'calendar_last_error' => $e->getMessage(),
-            ])->saveQuietly();
+            ]);
 
             throw $e;
         }
@@ -105,23 +149,53 @@ class GoogleCalendarService
         }
     }
 
-    protected function buildSummary(Appuntamento $appuntamento): string {
-        $cliente = $appuntamento->cliente;
-        $pt = $appuntamento->pt?->name ?? 'PT';
-        $totale = $appuntamento->abbonamento?->servizio?->incontri ?? 0;
+    protected function buildSummary(\App\Models\Appuntamento $appuntamento): string
+    {
+        $cliente = trim(($appuntamento->cliente?->nome ?? '') . ' ' . ($appuntamento->cliente?->cognome ?? ''));
+        $servizio = $appuntamento->abbonamento?->servizio?->nome ?? 'Appuntamento';
 
-        return sprintf(
-            '%s %s: %s/%s PT %s',
-            $cliente->nome,
-            $cliente->cognome,
-            $appuntamento->numerazione,
-            $totale,
-            $pt
-        );
+        $prefisso = match ($appuntamento->tipo_appuntamento) {
+            'call_google_meet' => 'Call',
+            'consegna_programma' => 'Consegna programma',
+            default => 'Personal',
+        };
+
+        return "{$cliente}: {$prefisso} ({$servizio})";
     }
 
-    protected function buildDescription(Appuntamento $appuntamento): string {
-        return $appuntamento->descrizione ?: 'Appuntamento CRM';
+    protected function buildDescription(\App\Models\Appuntamento $appuntamento): string
+    {
+        $righe = [
+            'Cliente: ' . trim(($appuntamento->cliente?->nome ?? '') . ' ' . ($appuntamento->cliente?->cognome ?? '')),
+            'Servizio: ' . ($appuntamento->abbonamento?->servizio?->nome ?? '-'),
+            'Tipo: ' . match ($appuntamento->tipo_appuntamento) {
+                'call_google_meet' => 'Call Google Meet',
+                'consegna_programma' => 'Consegna programma',
+                default => 'Personal',
+            },
+            'Durata: ' . ($appuntamento->evento_intera_giornata ? 'Giornata intera' : ($appuntamento->durata . ' minuti')),
+        ];
+
+        if (! empty($appuntamento->descrizione)) {
+            $righe[] = 'Note: ' . $appuntamento->descrizione;
+        }
+
+        return implode("\n", $righe);
+    }
+
+    protected function shouldCreateMeet(\App\Models\Appuntamento $appuntamento): bool
+    {
+        $servizio = $appuntamento->abbonamento?->servizio;
+
+        if (! $servizio) {
+            return false;
+        }
+
+        if ($appuntamento->tipo_appuntamento === 'call_google_meet') {
+            return true;
+        }
+
+        return (bool) ($servizio->crea_google_meet_default ?? false);
     }
 
     protected function buildEventId(Appuntamento $appuntamento): string {

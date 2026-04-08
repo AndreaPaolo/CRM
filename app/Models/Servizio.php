@@ -17,11 +17,18 @@ class Servizio extends Model
         'durata',
         'incontri',
         'tipo_fatturazione',
+        'tipo_appuntamento_default',
+        'evento_intera_giornata_default',
+        'crea_google_meet_default',
+        'prenotazione_autonoma_cliente',
     ];
 
     protected $casts = [
         'durata' => 'integer',
         'incontri' => 'integer',
+        'evento_intera_giornata_default' => 'boolean',
+        'crea_google_meet_default' => 'boolean',
+        'prenotazione_autonoma_cliente' => 'boolean',
     ];
 
     public function abbonamenti()

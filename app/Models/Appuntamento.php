@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Services\GoogleCalendarService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -12,18 +11,19 @@ class Appuntamento extends Model
 
     protected $table = 'appuntamenti';
 
-    protected static bool $isDeletingSessioneCondivisa = false;
-
     protected $fillable = [
         'cliente_id',
         'abbonamento_id',
-        'sessione_condivisa_uuid',
         'user_id',
         'data_ora',
         'durata',
         'descrizione',
         'numerazione',
+        'tipo_appuntamento',
+        'evento_intera_giornata',
+        'sessione_condivisa_uuid',
         'google_calendar_event_id',
+        'google_meet_link',
         'calendar_sync_status',
         'calendar_synced_at',
         'calendar_last_error',
@@ -31,6 +31,7 @@ class Appuntamento extends Model
 
     protected $casts = [
         'data_ora' => 'datetime',
+        'evento_intera_giornata' => 'boolean',
         'calendar_synced_at' => 'datetime',
     ];
 
@@ -61,15 +62,6 @@ class Appuntamento extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    public function getNumerazioneLabelAttribute(): string
-    {
-        $totale = $this->abbonamento?->servizio?->incontri ?? 0;
-
-        return $totale > 0
-            ? 'Lezione ' . $this->numerazione . ' / ' . $totale
-            : 'Lezione ' . $this->numerazione;
-    }
-
     protected static function booted(): void
     {
         static::creating(function (Appuntamento $appuntamento) {
@@ -81,11 +73,21 @@ class Appuntamento extends Model
                 $appuntamento->numerazione = 0;
             }
 
+            if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
+                $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
+                $appuntamento->durata = 1440;
+            }
+
             $appuntamento->calendar_sync_status = 'dirty';
             $appuntamento->calendar_last_error = null;
         });
 
         static::updating(function (Appuntamento $appuntamento) {
+            if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
+                $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
+                $appuntamento->durata = 1440;
+            }
+
             if ($appuntamento->isDirty([
                 'cliente_id',
                 'abbonamento_id',
@@ -93,71 +95,50 @@ class Appuntamento extends Model
                 'durata',
                 'descrizione',
                 'numerazione',
-                'sessione_condivisa_uuid',
+                'tipo_appuntamento',
+                'evento_intera_giornata',
             ])) {
                 $appuntamento->calendar_sync_status = 'dirty';
                 $appuntamento->calendar_last_error = null;
             }
         });
 
-        static::deleting(function (Appuntamento $appuntamento) {
-            if (self::$isDeletingSessioneCondivisa) {
-                return;
+        static::saved(function (Appuntamento $appuntamento) {
+            if ($appuntamento->cliente_id && $appuntamento->clienti()->count() === 0) {
+                $appuntamento->clienti()->syncWithoutDetaching([$appuntamento->cliente_id]);
             }
-
-            if (! $appuntamento->sessione_condivisa_uuid) {
-                return;
-            }
-
-            self::$isDeletingSessioneCondivisa = true;
 
             try {
-                $siblings = self::query()
-                    ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
-                    ->where('id', '!=', $appuntamento->id)
-                    ->get();
+                app(\App\Services\GoogleCalendarService::class)->syncAppuntamento(
+                    $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+                );
 
-                $service = app(GoogleCalendarService::class);
-
-                foreach ($siblings as $sibling) {
-                    try {
-                        $service->deleteAppuntamento($sibling->fresh(['cliente']));
-                    } catch (\Throwable $e) {
-                        //
-                    }
-                }
-
-                self::withoutEvents(function () use ($appuntamento) {
-                    self::query()
-                        ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
-                        ->where('id', '!=', $appuntamento->id)
-                        ->delete();
-                });
-            } finally {
-                self::$isDeletingSessioneCondivisa = false;
-            }
-        });
-
-        static::saved(function (Appuntamento $appuntamento) {
-            $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
-
-            if (! $abbonamento) {
-                return;
+                $appuntamento->updateQuietly([
+                    'calendar_sync_status' => 'synced',
+                    'calendar_synced_at' => now(),
+                    'calendar_last_error' => null,
+                ]);
+            } catch (\Throwable $e) {
+                $appuntamento->updateQuietly([
+                    'calendar_sync_status' => 'failed',
+                    'calendar_last_error' => $e->getMessage(),
+                ]);
             }
 
-            $abbonamento->aggiornaNumerazioneAppuntamenti();
-            $abbonamento->aggiornaStatoTerminato();
+            $abbonamento = $appuntamento->abbonamento;
+
+            if ($abbonamento) {
+                $abbonamento->aggiornaNumerazioneAppuntamenti();
+                $abbonamento->aggiornaStatoTerminato();
+            }
         });
 
         static::deleted(function (Appuntamento $appuntamento) {
-            $abbonamento = $appuntamento->abbonamento?->loadMissing('servizio');
-
-            if (! $abbonamento) {
-                return;
+            try {
+                app(\App\Services\GoogleCalendarService::class)->deleteAppuntamento($appuntamento);
+            } catch (\Throwable $e) {
+                //
             }
-
-            $abbonamento->aggiornaNumerazioneAppuntamenti();
-            $abbonamento->aggiornaStatoTerminato();
         });
     }
 }
