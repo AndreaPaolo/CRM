@@ -4,7 +4,6 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
-use Filament\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget;
@@ -25,13 +24,17 @@ class AppuntamentiDomaniWidget extends TableWidget
                     ->whereDate('data_ora', today()->addDay())
                     ->orderBy('data_ora')
             )
-            ->recordUrl(fn (Appuntamento $record): string => AppuntamentoResource::getUrl('edit', ['record' => $record]))
+            ->recordUrl(fn (?Appuntamento $record): string => $record
+                ? AppuntamentoResource::getUrl('edit', ['record' => $record])
+                : '#')
             ->paginated([10, 25])
             ->defaultPaginationPageOption(10)
             ->columns([
                 TextColumn::make('cliente_nome')
                     ->label('Nome e cognome')
-                    ->state(fn (Appuntamento $record) => trim(($record->cliente?->nome ?? '') . ' ' . ($record->cliente?->cognome ?? '')))
+                    ->state(fn (?Appuntamento $record) => $record
+                        ? trim(($record->cliente?->nome ?? '') . ' ' . ($record->cliente?->cognome ?? ''))
+                        : '-')
                     ->searchable(query: function (Builder $query, string $search): Builder {
                         return $query->whereHas('cliente', function (Builder $q) use ($search) {
                             $q->where('nome', 'like', "%{$search}%")
@@ -47,16 +50,15 @@ class AppuntamentiDomaniWidget extends TableWidget
 
                 TextColumn::make('lezione_label')
                     ->label('Lezione')
-                    ->state(fn (Appuntamento $record) => $this->buildLezioneLabel($record)),
-            ])
-            ->recordActions([
-                Action::make('whatsapp_reminder')
-                    ->label('Reminder WhatsApp')
-                    ->icon('heroicon-o-chat-bubble-left-right')
+                    ->state(fn (?Appuntamento $record) => $record ? $this->buildLezioneLabel($record) : '-'),
+
+                TextColumn::make('whatsapp_reminder')
+                    ->label('Reminder')
+                    ->state(fn (?Appuntamento $record) => $record && filled($record->cliente?->telefono) ? 'Invia reminder' : '-')
                     ->color('success')
-                    ->url(fn (Appuntamento $record) => $this->buildWhatsappUrl($record))
-                    ->openUrlInNewTab()
-                    ->visible(fn (Appuntamento $record) => filled($record->cliente?->telefono)),
+                    ->weight('bold')
+                    ->url(fn (?Appuntamento $record) => $record ? $this->buildWhatsappUrl($record) : null)
+                    ->openUrlInNewTab(),
             ]);
     }
 
