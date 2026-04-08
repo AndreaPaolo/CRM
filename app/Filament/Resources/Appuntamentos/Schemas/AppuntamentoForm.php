@@ -108,9 +108,6 @@ class AppuntamentoForm
                             $dataEvento = $get('data_evento');
                             if ($dataEvento) {
                                 $set('data_ora', Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s'));
-                            } elseif ($get('data_ora')) {
-                                $set('data_evento', Carbon::parse($get('data_ora'))->format('Y-m-d'));
-                                $set('data_ora', Carbon::parse($get('data_ora'))->startOfDay()->format('Y-m-d H:i:s'));
                             }
 
                             return;
@@ -120,11 +117,6 @@ class AppuntamentoForm
 
                         if ((int) ($get('durata') ?: 0) === 1440 || blank($get('durata'))) {
                             $set('durata', 60);
-                        }
-
-                        $dataEvento = $get('data_evento');
-                        if ($dataEvento && ! $get('data_ora')) {
-                            $set('data_ora', Carbon::parse($dataEvento)->setHour(9)->setMinute(0)->format('Y-m-d H:i:s'));
                         }
                     }),
 
@@ -136,15 +128,13 @@ class AppuntamentoForm
                     ->seconds(false)
                     ->required(fn (callable $get) => $get('tipo_appuntamento') !== 'consegna_programma')
                     ->visible(fn (callable $get) => $get('tipo_appuntamento') !== 'consegna_programma')
-                    ->dehydrated(true)
-                    ->live()
-                    ->helperText('Usalo per personal e call Google Meet.'),
+                    ->dehydrated(true),
 
                 DatePicker::make('data_evento')
                     ->label('Data evento')
                     ->required(fn (callable $get) => $get('tipo_appuntamento') === 'consegna_programma')
                     ->visible(fn (callable $get) => $get('tipo_appuntamento') === 'consegna_programma')
-                    ->dehydrated(false)
+                    ->dehydrated(true)
                     ->live()
                     ->afterStateUpdated(function ($state, callable $set) {
                         if ($state) {
@@ -208,16 +198,6 @@ class AppuntamentoForm
                             : "Lezione {$prossimoNumero}";
                     }),
 
-                Placeholder::make('anteprima_calendar')
-                    ->label('Google Calendar')
-                    ->content(function (callable $get) {
-                        return match ($get('tipo_appuntamento')) {
-                            'call_google_meet' => 'Aggiornerà il titolo dell’evento e manterrà/creerà il Google Meet.',
-                            'consegna_programma' => 'Aggiornerà il titolo e creerà un evento giornata intera.',
-                            default => 'Aggiornerà il titolo come evento personal standard.',
-                        };
-                    }),
-
                 Textarea::make('descrizione')
                     ->label('Descrizione / note')
                     ->rows(4)
@@ -239,22 +219,19 @@ class AppuntamentoForm
             return;
         }
 
-        if (blank($get('tipo_appuntamento')) || $get('tipo_appuntamento') === 'personal') {
-            $tipo = $servizio->tipo_appuntamento_default ?? 'personal';
-            $set('tipo_appuntamento', $tipo);
+        $tipo = $servizio->tipo_appuntamento_default ?? 'personal';
+        $set('tipo_appuntamento', $tipo);
 
-            if ($tipo === 'consegna_programma') {
-                $set('evento_intera_giornata', true);
-                $set('durata', 1440);
+        if ($tipo === 'consegna_programma') {
+            $set('evento_intera_giornata', true);
+            $set('durata', 1440);
 
-                $dataEvento = $get('data_evento') ?: now()->format('Y-m-d');
-                $set('data_evento', $dataEvento);
-                $set('data_ora', Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s'));
-            } else {
-                $set('evento_intera_giornata', false);
-                $set('durata', 60);
-                $set('data_evento', null);
-            }
+            $dataEvento = $get('data_evento') ?: now()->format('Y-m-d');
+            $set('data_evento', $dataEvento);
+            $set('data_ora', Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s'));
+        } else {
+            $set('evento_intera_giornata', false);
+            $set('durata', 60);
         }
     }
 }

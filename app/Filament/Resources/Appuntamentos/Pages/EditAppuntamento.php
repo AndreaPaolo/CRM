@@ -197,19 +197,16 @@ class EditAppuntamento extends EditRecord
         if ($tipo === 'consegna_programma') {
             $dataEvento = $data['data_evento'] ?? null;
 
-            if (! $dataEvento) {
-                throw new \InvalidArgumentException('Per la consegna programma devi selezionare una data evento.');
+            if ($dataEvento) {
+                $data['data_ora'] = \Carbon\Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
+            } elseif (empty($data['data_ora'])) {
+                $data['data_ora'] = now()->startOfDay()->format('Y-m-d H:i:s');
             }
 
-            $data['data_ora'] = Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
             $data['evento_intera_giornata'] = true;
             $data['durata'] = 1440;
         } else {
             $data['evento_intera_giornata'] = false;
-
-            if (empty($data['data_ora'])) {
-                throw new \InvalidArgumentException('Per questo tipo di appuntamento devi inserire data e ora.');
-            }
 
             if (empty($data['durata']) || (int) $data['durata'] === 1440) {
                 $data['durata'] = 60;
