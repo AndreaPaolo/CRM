@@ -44,9 +44,7 @@ class CreateAppuntamento extends CreateRecord
 
         unset($data['clienti']);
 
-        $data = $this->normalizeEventDateData($data);
-
-        return $data;
+        return $this->normalizeEventDateData($data);
     }
 
     protected function handleRecordCreation(array $data): Appuntamento
@@ -115,14 +113,19 @@ class CreateAppuntamento extends CreateRecord
         if ($tipo === 'consegna_programma') {
             $dataEvento = $data['data_evento'] ?? null;
 
-            if ($dataEvento) {
-                $data['data_ora'] = Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
+            if (! $dataEvento) {
+                throw new \InvalidArgumentException('Per la consegna programma devi selezionare una data evento.');
             }
 
+            $data['data_ora'] = Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
             $data['evento_intera_giornata'] = true;
             $data['durata'] = 1440;
         } else {
             $data['evento_intera_giornata'] = false;
+
+            if (empty($data['data_ora'])) {
+                throw new \InvalidArgumentException('Per questo tipo di appuntamento devi inserire data e ora.');
+            }
 
             if (empty($data['durata']) || (int) $data['durata'] === 1440) {
                 $data['durata'] = 60;

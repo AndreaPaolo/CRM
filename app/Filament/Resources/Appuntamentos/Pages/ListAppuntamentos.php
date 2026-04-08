@@ -38,6 +38,7 @@ class ListAppuntamentos extends ListRecords
                 ->icon('heroicon-o-arrow-path')
                 ->color('info')
                 ->requiresConfirmation()
+                ->visible(false)
                 ->action(function () {
             $service = app(\App\Services\GoogleCalendarService::class);
 
