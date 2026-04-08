@@ -34,6 +34,9 @@ class AppuntamentoForm
                     ->afterStateUpdated(function (callable $set) {
                         $set('abbonamento_id', null);
                         $set('clienti', []);
+                        $set('tipo_appuntamento', 'personal');
+                        $set('evento_intera_giornata', false);
+                        $set('durata', 60);
                     }),
 
                 Select::make('clienti')
@@ -79,23 +82,7 @@ class AppuntamentoForm
                     ->disabled(fn (callable $get) => blank($get('cliente_id')))
                     ->placeholder('Seleziona prima il cliente')
                     ->afterStateUpdated(function ($state, callable $set) {
-                        if (! $state) {
-                            return;
-                        }
-
-                        $abbonamento = Abbonamento::with('servizio')->find($state);
-                        $servizio = $abbonamento?->servizio;
-
-                        if (! $servizio) {
-                            return;
-                        }
-
-                        $set('tipo_appuntamento', $servizio->tipo_appuntamento_default ?? 'personal');
-                        $set('evento_intera_giornata', (bool) ($servizio->evento_intera_giornata_default ?? false));
-
-                        if (($servizio->evento_intera_giornata_default ?? false) === true) {
-                            $set('durata', 1440);
-                        }
+                        self::applyDefaultsFromAbbonamento($state, $set);
                     }),
 
                 Select::make('tipo_appuntamento')
@@ -108,24 +95,43 @@ class AppuntamentoForm
                     ->required()
                     ->default('personal')
                     ->live()
-                    ->afterStateUpdated(function ($state, callable $set) {
+                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
                         if ($state === 'consegna_programma') {
                             $set('evento_intera_giornata', true);
                             $set('durata', 1440);
+                            return;
                         }
 
                         if ($state === 'call_google_meet') {
                             $set('evento_intera_giornata', false);
-                            $set('durata', 60);
+
+                            if ((int) ($get('durata') ?: 0) === 1440) {
+                                $set('durata', 60);
+                            }
+
+                            return;
+                        }
+
+                        if ($state === 'personal') {
+                            $set('evento_intera_giornata', false);
+
+                            if ((int) ($get('durata') ?: 0) === 1440) {
+                                $set('durata', 60);
+                            }
                         }
                     }),
 
                 Toggle::make('evento_intera_giornata')
                     ->label('Evento intera giornata')
                     ->live()
-                    ->afterStateUpdated(function ($state, callable $set) {
+                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
                         if ($state) {
                             $set('durata', 1440);
+                            return;
+                        }
+
+                        if ((int) ($get('durata') ?: 0) === 1440) {
+                            $set('durata', $get('tipo_appuntamento') === 'call_google_meet' ? 60 : 60);
                         }
                     }),
 
@@ -145,11 +151,13 @@ class AppuntamentoForm
                         }
 
                         if ($abbonamento->servizio->tipo_fatturazione === 'mensile') {
-                            $mese = now();
+                            $dataOra = $get('data_ora');
+                            $meseRef = $dataOra ? \Carbon\Carbon::parse($dataOra) : now();
+
                             $conteggio = Appuntamento::query()
                                 ->where('abbonamento_id', $abbonamentoId)
-                                ->whereYear('data_ora', $mese->year)
-                                ->whereMonth('data_ora', $mese->month)
+                                ->whereYear('data_ora', $meseRef->year)
+                                ->whereMonth('data_ora', $meseRef->month)
                                 ->count() + 1;
 
                             return $conteggio . '/mese';
@@ -179,5 +187,32 @@ class AppuntamentoForm
                     ->rows(4)
                     ->columnSpanFull(),
             ]);
+    }
+
+    protected static function applyDefaultsFromAbbonamento($abbonamentoId, callable $set): void
+    {
+        if (! $abbonamentoId) {
+            return;
+        }
+
+        $abbonamento = Abbonamento::with('servizio')->find($abbonamentoId);
+        $servizio = $abbonamento?->servizio;
+
+        if (! $servizio) {
+            return;
+        }
+
+        $tipo = $servizio->tipo_appuntamento_default ?? 'personal';
+        $allDay = (bool) ($servizio->evento_intera_giornata_default ?? false);
+
+        $set('tipo_appuntamento', $tipo);
+        $set('evento_intera_giornata', $allDay);
+
+        if ($allDay) {
+            $set('durata', 1440);
+            return;
+        }
+
+        $set('durata', $tipo === 'call_google_meet' ? 60 : 60);
     }
 }
