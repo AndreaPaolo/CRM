@@ -4,6 +4,8 @@ namespace App\Filament\Resources\Appuntamentos\Pages;
 
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
+use Carbon\Carbon;
+use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Support\Str;
 
@@ -13,11 +15,11 @@ class EditAppuntamento extends EditRecord
 
     protected array $partecipantiSelezionati = [];
 
-    public function mount(int|string $record): void
+    public function mount($record): void
     {
         parent::mount($record);
 
-        $appuntamento = $this->record->loadMissing(['abbonamento.clienti']);
+        $appuntamento = $this->record->fresh(['abbonamento.clienti']);
 
         $altriPartecipanti = [];
 
@@ -36,7 +38,17 @@ class EditAppuntamento extends EditRecord
             'cliente_id' => $appuntamento->cliente_id,
             'abbonamento_id' => $appuntamento->abbonamento_id,
             'clienti' => $altriPartecipanti,
+            'data_evento' => $appuntamento->evento_intera_giornata && $appuntamento->data_ora
+                ? $appuntamento->data_ora->format('Y-m-d')
+                : null,
         ]);
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            DeleteAction::make(),
+        ];
     }
 
     protected function mutateFormDataBeforeSave(array $data): array
@@ -44,6 +56,8 @@ class EditAppuntamento extends EditRecord
         $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
 
         unset($data['clienti']);
+
+        $data = $this->normalizeEventDateData($data);
 
         return $data;
     }
@@ -66,11 +80,9 @@ class EditAppuntamento extends EditRecord
             $partecipanti = [(int) $data['cliente_id']];
         }
 
-        // Caso: diventa o resta condiviso
         if (count($partecipanti) > 1) {
             $uuid = $record->sessione_condivisa_uuid ?: (string) Str::uuid();
 
-            // aggiorno tutti gli esistenti della sessione
             if ($record->sessione_condivisa_uuid) {
                 Appuntamento::query()
                     ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
@@ -79,6 +91,8 @@ class EditAppuntamento extends EditRecord
                         'user_id' => $data['user_id'] ?? $record->user_id,
                         'data_ora' => $data['data_ora'],
                         'durata' => $data['durata'],
+                        'tipo_appuntamento' => $data['tipo_appuntamento'],
+                        'evento_intera_giornata' => $data['evento_intera_giornata'] ?? false,
                         'descrizione' => $data['descrizione'] ?? null,
                         'sessione_condivisa_uuid' => $uuid,
                         'calendar_sync_status' => 'dirty',
@@ -91,6 +105,8 @@ class EditAppuntamento extends EditRecord
                     'user_id' => $data['user_id'] ?? $record->user_id,
                     'data_ora' => $data['data_ora'],
                     'durata' => $data['durata'],
+                    'tipo_appuntamento' => $data['tipo_appuntamento'],
+                    'evento_intera_giornata' => $data['evento_intera_giornata'] ?? false,
                     'descrizione' => $data['descrizione'] ?? null,
                     'sessione_condivisa_uuid' => $uuid,
                     'calendar_sync_status' => 'dirty',
@@ -114,6 +130,8 @@ class EditAppuntamento extends EditRecord
                     'user_id' => $data['user_id'] ?? $record->user_id,
                     'data_ora' => $data['data_ora'],
                     'durata' => $data['durata'],
+                    'tipo_appuntamento' => $data['tipo_appuntamento'],
+                    'evento_intera_giornata' => $data['evento_intera_giornata'] ?? false,
                     'descrizione' => $data['descrizione'] ?? null,
                     'numerazione' => $record->numerazione,
                     'calendar_sync_status' => 'dirty',
@@ -133,7 +151,6 @@ class EditAppuntamento extends EditRecord
             return Appuntamento::query()->find($record->id)?->fresh() ?? $record->fresh();
         }
 
-        // Caso: torna singolo
         if ($record->sessione_condivisa_uuid) {
             Appuntamento::query()
                 ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
@@ -148,6 +165,8 @@ class EditAppuntamento extends EditRecord
             'user_id' => $data['user_id'] ?? $record->user_id,
             'data_ora' => $data['data_ora'],
             'durata' => $data['durata'],
+            'tipo_appuntamento' => $data['tipo_appuntamento'],
+            'evento_intera_giornata' => $data['evento_intera_giornata'] ?? false,
             'descrizione' => $data['descrizione'] ?? null,
             'calendar_sync_status' => 'dirty',
             'calendar_last_error' => null,
@@ -171,5 +190,31 @@ class EditAppuntamento extends EditRecord
             $abbonamento->aggiornaStatoTerminato();
             $abbonamento->sincronizzaAppuntamentiSuGoogle();
         }
+    }
+
+    protected function normalizeEventDateData(array $data): array
+    {
+        $tipo = $data['tipo_appuntamento'] ?? 'personal';
+
+        if ($tipo === 'consegna_programma') {
+            $dataEvento = $data['data_evento'] ?? null;
+
+            if ($dataEvento) {
+                $data['data_ora'] = Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
+            }
+
+            $data['evento_intera_giornata'] = true;
+            $data['durata'] = 1440;
+        } else {
+            $data['evento_intera_giornata'] = false;
+
+            if (empty($data['durata']) || (int) $data['durata'] === 1440) {
+                $data['durata'] = 60;
+            }
+        }
+
+        unset($data['data_evento']);
+
+        return $data;
     }
 }

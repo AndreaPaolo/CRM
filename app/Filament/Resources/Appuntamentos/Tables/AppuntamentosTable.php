@@ -3,15 +3,20 @@
 namespace App\Filament\Resources\Appuntamentos\Tables;
 
 use App\Models\Appuntamento;
+use App\Services\GoogleCalendarService;
+use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
-use Filament\Support\Enums\FontWeight;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\DatePicker;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
-use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 
 class AppuntamentosTable
 {
@@ -21,114 +26,73 @@ class AppuntamentosTable
             ->defaultSort('data_ora', 'desc')
             ->columns([
                 TextColumn::make('data_ora')
-                    ->label('Data e ora')
+                    ->label('Data')
                     ->dateTime('d/m/Y H:i')
-                    ->sortable()
-                    ->weight(FontWeight::Bold),
+                    ->sortable(),
 
-                TextColumn::make('cliente_display')
-                    ->label('Cliente')
-                    ->state(function (Appuntamento $record) {
-                        return $record->cliente
-                            ? $record->cliente->nome . ' ' . $record->cliente->cognome
-                            : '-';
+                TextColumn::make('tipo_appuntamento')
+                    ->label('Tipologia')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state) => match ($state) {
+                        'personal' => 'Personal',
+                        'call_google_meet' => 'Call Google Meet',
+                        'consegna_programma' => 'Consegna programma',
+                        default => '-',
                     })
-                    ->weight(FontWeight::SemiBold)
+                    ->color(fn (?string $state) => match ($state) {
+                        'personal' => 'gray',
+                        'call_google_meet' => 'info',
+                        'consegna_programma' => 'warning',
+                        default => 'gray',
+                    }),
+
+                TextColumn::make('cliente_nome')
+                    ->label('Cliente')
+                    ->state(fn (Appuntamento $record) => trim(($record->cliente?->nome ?? '') . ' ' . ($record->cliente?->cognome ?? '')))
                     ->searchable(query: function (Builder $query, string $search): Builder {
                         return $query->whereHas('cliente', function (Builder $q) use ($search) {
                             $q->where('nome', 'like', "%{$search}%")
                                 ->orWhere('cognome', 'like', "%{$search}%");
                         });
                     })
-                    ->wrap(),
-
-                TextColumn::make('sessione_info')
-                    ->label('Sessione')
-                    ->state(function (Appuntamento $record) {
-                        if (! $record->sessione_condivisa_uuid) {
-                            return 'Individuale';
-                        }
-
-                        $count = Appuntamento::query()
-                            ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                            ->count();
-
-                        return $count > 1 ? "Condivisa ({$count})" : 'Condivisa';
-                    })
-                    ->badge()
-                    ->color(function (Appuntamento $record) {
-                        if (! $record->sessione_condivisa_uuid) {
-                            return 'gray';
-                        }
-
-                        $count = Appuntamento::query()
-                            ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                            ->count();
-
-                        return $count > 2 ? 'info' : 'warning';
-                    }),
+                    ->sortable(),
 
                 TextColumn::make('abbonamento.servizio.nome')
                     ->label('Servizio')
-                    ->weight(FontWeight::SemiBold)
-                    ->searchable()
-                    ->sortable()
-                    ->wrap(),
-
-                TextColumn::make('tipo_partecipazione')
-                    ->label('Tipo')
-                    ->state(fn (Appuntamento $record) => $record->abbonamento?->tipo_partecipazione)
-                    ->badge()
-                    ->formatStateUsing(fn (?string $state) => match ($state) {
-                        'singolo' => 'Singolo',
-                        'condiviso' => 'Condiviso',
-                        'gruppo' => 'Gruppo',
-                        default => '-',
-                    })
-                    ->color(fn (?string $state) => match ($state) {
-                        'singolo' => 'gray',
-                        'condiviso' => 'warning',
-                        'gruppo' => 'info',
-                        default => 'gray',
-                    }),
+                    ->wrap()
+                    ->searchable(),
 
                 TextColumn::make('numerazione_label')
                     ->label('Lezione')
                     ->state(function (Appuntamento $record) {
-                        $totale = (int) ($record->abbonamento?->servizio?->incontri ?? 0);
+                        $servizio = $record->abbonamento?->servizio;
 
-                        if ($totale > 0) {
-                            return "{$record->numerazione} / {$totale}";
+                        if (! $servizio) {
+                            return '-';
                         }
 
-                        return (string) $record->numerazione;
-                    })
-                    ->badge()
-                    ->color(function (Appuntamento $record) {
-                        $totale = (int) ($record->abbonamento?->servizio?->incontri ?? 0);
-
-                        if ($totale <= 0) {
-                            return 'gray';
+                        if (($record->tipo_appuntamento ?? 'personal') !== 'personal') {
+                            return '-';
                         }
 
-                        $percentuale = ($record->numerazione / max(1, $totale)) * 100;
+                        if ($servizio->tipo_fatturazione === 'mensile') {
+                            return ($record->numerazione ?: '-') . '/mese';
+                        }
 
-                        return match (true) {
-                            $percentuale >= 100 => 'danger',
-                            $percentuale >= 70 => 'warning',
-                            default => 'success',
-                        };
+                        $totale = (int) ($servizio->incontri ?? 0);
+
+                        return $totale > 0
+                            ? (($record->numerazione ?: '-') . '/' . $totale)
+                            : (string) ($record->numerazione ?: '-');
                     }),
 
                 TextColumn::make('durata')
                     ->label('Durata')
-                    ->formatStateUsing(fn ($state) => $state . ' min')
-                    ->alignCenter(),
+                    ->formatStateUsing(fn ($state, Appuntamento $record) => $record->evento_intera_giornata ? 'Giornata intera' : ($state . ' min')),
 
                 TextColumn::make('pt.name')
                     ->label('PT')
-                    ->placeholder('-')
-                    ->toggleable(),
+                    ->placeholder('-'),
 
                 TextColumn::make('calendar_sync_status')
                     ->label('Sync')
@@ -144,77 +108,55 @@ class AppuntamentosTable
                         'dirty' => 'warning',
                         'failed' => 'danger',
                         default => 'gray',
+                    })
+                    ->tooltip('Clicca per sincronizzare questo appuntamento')
+                    ->action(function (Appuntamento $record): void {
+                        try {
+                            app(GoogleCalendarService::class)->syncAppuntamento(
+                                $record->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+                            );
+
+                            Notification::make()
+                                ->title('Appuntamento sincronizzato')
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            $record->updateQuietly([
+                                'calendar_sync_status' => 'failed',
+                                'calendar_last_error' => $e->getMessage(),
+                            ]);
+
+                            Notification::make()
+                                ->title('Errore sincronizzazione')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
                     }),
 
-                TextColumn::make('descrizione')
-                    ->label('Descrizione')
-                    ->limit(35)
-                    ->tooltip(fn (Appuntamento $record) => $record->descrizione)
-                    ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('calendar_synced_at')
-                    ->label('Ultima sync')
-                    ->since()
+                TextColumn::make('calendar_last_error')
+                    ->label('Errore sync')
+                    ->limit(40)
+                    ->tooltip(fn (?string $state) => $state)
                     ->placeholder('-')
                     ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('created_at')
-                    ->label('Creato')
-                    ->since()
-                    ->toggleable(isToggledHiddenByDefault: true),
             ])
-            ->groups([
-                Group::make('data_ora')
-                    ->label('Giorno')
-                    ->getTitleFromRecordUsing(fn (Appuntamento $record) => $record->data_ora?->format('d/m/Y'))
-                    ->getDescriptionFromRecordUsing(fn (Appuntamento $record) => $record->data_ora?->translatedFormat('l'))
-                    ->collapsible(),
-
-                Group::make('sessione_condivisa_uuid')
-                    ->label('Sessione condivisa')
-                    ->getTitleFromRecordUsing(function (Appuntamento $record) {
-                        if (! $record->sessione_condivisa_uuid) {
-                            return 'Sessioni individuali';
-                        }
-
-                        $count = Appuntamento::query()
-                            ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
-                            ->count();
-
-                        return "Sessione condivisa ({$count})";
-                    })
-                    ->collapsible(),
-
-                Group::make('tipo_partecipazione_virtuale')
-                    ->label('Tipologia')
-                    ->getTitleFromRecordUsing(function (Appuntamento $record) {
-                        return match ($record->abbonamento?->tipo_partecipazione) {
-                            'singolo' => 'Singolo',
-                            'condiviso' => 'Condiviso',
-                            'gruppo' => 'Gruppo',
-                            default => 'Altro',
-                        };
-                    })
-                    ->collapsible(),
-            ])
-            ->defaultGroup('data_ora')
             ->filters([
-                SelectFilter::make('tipo_partecipazione')
-                    ->label('Tipologia appuntamento')
+                SelectFilter::make('tipo_appuntamento')
+                    ->label('Tipologia')
                     ->options([
-                        'singolo' => 'Singolo',
-                        'condiviso' => 'Condiviso',
-                        'gruppo' => 'Gruppo / Small group',
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        if (blank($data['value'] ?? null)) {
-                            return $query;
-                        }
+                        'personal' => 'Personal',
+                        'call_google_meet' => 'Call Google Meet',
+                        'consegna_programma' => 'Consegna programma',
+                    ]),
 
-                        return $query->whereHas('abbonamento', function (Builder $q) use ($data) {
-                            $q->where('tipo_partecipazione', $data['value']);
-                        });
-                    }),
+                SelectFilter::make('calendar_sync_status')
+                    ->label('Sync')
+                    ->options([
+                        'synced' => 'Sync OK',
+                        'dirty' => 'Da aggiornare',
+                        'failed' => 'Errore',
+                    ]),
 
                 SelectFilter::make('cliente_id')
                     ->label('Cliente')
@@ -223,48 +165,82 @@ class AppuntamentosTable
                     ->preload()
                     ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome),
 
-                SelectFilter::make('calendar_sync_status')
-                    ->label('Sync Google')
-                    ->options([
-                        'synced' => 'Sync OK',
-                        'dirty' => 'Da aggiornare',
-                        'failed' => 'Errore',
-                    ]),
-
-                Filter::make('data_ora')
+                Filter::make('data_range')
                     ->label('Data')
                     ->form([
-                        \Filament\Forms\Components\DatePicker::make('data_da')
-                            ->label('Da'),
-                        \Filament\Forms\Components\DatePicker::make('data_a')
-                            ->label('A'),
+                        DatePicker::make('da')->label('Da'),
+                        DatePicker::make('a')->label('A'),
                     ])
                     ->query(function (Builder $query, array $data): Builder {
                         return $query
-                            ->when(
-                                $data['data_da'] ?? null,
-                                fn (Builder $q, $date) => $q->whereDate('data_ora', '>=', $date)
-                            )
-                            ->when(
-                                $data['data_a'] ?? null,
-                                fn (Builder $q, $date) => $q->whereDate('data_ora', '<=', $date)
-                            );
+                            ->when($data['da'] ?? null, fn (Builder $q, $date) => $q->whereDate('data_ora', '>=', $date))
+                            ->when($data['a'] ?? null, fn (Builder $q, $date) => $q->whereDate('data_ora', '<=', $date));
                     }),
-
-                Filter::make('oggi')
-                    ->label('Solo oggi')
-                    ->query(fn (Builder $query): Builder => $query->whereDate('data_ora', now()->toDateString())),
-
-                Filter::make('sessioni_condivise')
-                    ->label('Solo sessioni condivise')
-                    ->query(fn (Builder $query): Builder => $query->whereNotNull('sessione_condivisa_uuid')),
             ])
-            ->recordTitleAttribute('id')
-            ->striped()
-            ->defaultPaginationPageOption(25)
-            ->paginated([10, 25, 50, 100])
-            ->bulkActions([
+            ->recordActions([
+                EditAction::make(),
+
+                Action::make('sync_singolo')
+                    ->label('Sync')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('gray')
+                    ->action(function (Appuntamento $record): void {
+                        try {
+                            app(GoogleCalendarService::class)->syncAppuntamento(
+                                $record->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+                            );
+
+                            Notification::make()
+                                ->title('Appuntamento sincronizzato')
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            $record->updateQuietly([
+                                'calendar_sync_status' => 'failed',
+                                'calendar_last_error' => $e->getMessage(),
+                            ]);
+
+                            Notification::make()
+                                ->title('Errore sincronizzazione')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+            ])
+            ->toolbarActions([
                 BulkActionGroup::make([
+                    BulkAction::make('sync_bulk')
+                        ->label('Sincronizza selezionati')
+                        ->icon('heroicon-o-arrow-path')
+                        ->color('info')
+                        ->requiresConfirmation()
+                        ->action(function (Collection $records): void {
+                            $ok = 0;
+                            $errors = 0;
+
+                            foreach ($records as $record) {
+                                try {
+                                    app(GoogleCalendarService::class)->syncAppuntamento(
+                                        $record->fresh(['cliente', 'abbonamento.servizio', 'pt'])
+                                    );
+                                    $ok++;
+                                } catch (\Throwable $e) {
+                                    $record->updateQuietly([
+                                        'calendar_sync_status' => 'failed',
+                                        'calendar_last_error' => $e->getMessage(),
+                                    ]);
+                                    $errors++;
+                                }
+                            }
+
+                            Notification::make()
+                                ->title('Sincronizzazione completata')
+                                ->body("Sincronizzati: {$ok} · Errori: {$errors}")
+                                ->success()
+                                ->send();
+                        }),
+
                     DeleteBulkAction::make(),
                 ]),
             ]);

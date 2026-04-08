@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Appuntamentos\Pages;
 
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
 use App\Models\Appuntamento;
+use Carbon\Carbon;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Support\Str;
 
@@ -28,7 +29,6 @@ class CreateAppuntamento extends CreateRecord
         }
 
         $clienti = request()->query('clienti');
-
         if (is_array($clienti)) {
             $data['clienti'] = array_map('intval', $clienti);
         }
@@ -40,9 +40,11 @@ class CreateAppuntamento extends CreateRecord
 
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $this->partecipantiSelezionati = $data['clienti'] ?? [];
+        $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
 
         unset($data['clienti']);
+
+        $data = $this->normalizeEventDateData($data);
 
         return $data;
     }
@@ -52,7 +54,7 @@ class CreateAppuntamento extends CreateRecord
         $partecipanti = collect($this->partecipantiSelezionati);
 
         if (! empty($data['cliente_id'])) {
-            $partecipanti->prepend($data['cliente_id']);
+            $partecipanti->prepend((int) $data['cliente_id']);
         }
 
         $partecipanti = $partecipanti
@@ -62,7 +64,7 @@ class CreateAppuntamento extends CreateRecord
             ->all();
 
         if (empty($partecipanti) && ! empty($data['cliente_id'])) {
-            $partecipanti = [$data['cliente_id']];
+            $partecipanti = [(int) $data['cliente_id']];
         }
 
         $uuidSessione = count($partecipanti) > 1 ? (string) Str::uuid() : null;
@@ -103,6 +105,32 @@ class CreateAppuntamento extends CreateRecord
 
     protected function preserveFormDataWhenCreatingAnother(array $data): array
     {
+        return $data;
+    }
+
+    protected function normalizeEventDateData(array $data): array
+    {
+        $tipo = $data['tipo_appuntamento'] ?? 'personal';
+
+        if ($tipo === 'consegna_programma') {
+            $dataEvento = $data['data_evento'] ?? null;
+
+            if ($dataEvento) {
+                $data['data_ora'] = Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s');
+            }
+
+            $data['evento_intera_giornata'] = true;
+            $data['durata'] = 1440;
+        } else {
+            $data['evento_intera_giornata'] = false;
+
+            if (empty($data['durata']) || (int) $data['durata'] === 1440) {
+                $data['durata'] = 60;
+            }
+        }
+
+        unset($data['data_evento']);
+
         return $data;
     }
 }
