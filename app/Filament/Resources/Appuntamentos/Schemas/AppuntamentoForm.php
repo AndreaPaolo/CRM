@@ -105,9 +105,12 @@ class AppuntamentoForm
                             $set('evento_intera_giornata', true);
                             $set('durata', 1440);
 
-                            $dataOra = $get('data_ora');
-                            if ($dataOra) {
-                                $set('data_evento', Carbon::parse($dataOra)->format('Y-m-d'));
+                            $dataEvento = $get('data_evento');
+                            if ($dataEvento) {
+                                $set('data_ora', Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s'));
+                            } elseif ($get('data_ora')) {
+                                $set('data_evento', Carbon::parse($get('data_ora'))->format('Y-m-d'));
+                                $set('data_ora', Carbon::parse($get('data_ora'))->startOfDay()->format('Y-m-d H:i:s'));
                             }
 
                             return;
@@ -133,6 +136,7 @@ class AppuntamentoForm
                     ->seconds(false)
                     ->required(fn (callable $get) => $get('tipo_appuntamento') !== 'consegna_programma')
                     ->visible(fn (callable $get) => $get('tipo_appuntamento') !== 'consegna_programma')
+                    ->dehydrated(true)
                     ->live()
                     ->helperText('Usalo per personal e call Google Meet.'),
 
@@ -242,9 +246,14 @@ class AppuntamentoForm
             if ($tipo === 'consegna_programma') {
                 $set('evento_intera_giornata', true);
                 $set('durata', 1440);
+
+                $dataEvento = $get('data_evento') ?: now()->format('Y-m-d');
+                $set('data_evento', $dataEvento);
+                $set('data_ora', Carbon::parse($dataEvento)->startOfDay()->format('Y-m-d H:i:s'));
             } else {
                 $set('evento_intera_giornata', false);
                 $set('durata', 60);
+                $set('data_evento', null);
             }
         }
     }
