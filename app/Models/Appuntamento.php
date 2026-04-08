@@ -73,7 +73,9 @@ class Appuntamento extends Model
                 $appuntamento->numerazione = 0;
             }
 
-            self::applyServizioDefaults($appuntamento);
+            if (blank($appuntamento->tipo_appuntamento)) {
+                $appuntamento->tipo_appuntamento = 'personal';
+            }
 
             if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
                 $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
@@ -85,8 +87,6 @@ class Appuntamento extends Model
         });
 
         static::updating(function (Appuntamento $appuntamento) {
-            self::applyServizioDefaults($appuntamento);
-
             if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
                 $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
                 $appuntamento->durata = 1440;
@@ -144,31 +144,5 @@ class Appuntamento extends Model
                 //
             }
         });
-    }
-
-    protected static function applyServizioDefaults(Appuntamento $appuntamento): void
-    {
-        if (! $appuntamento->abbonamento_id) {
-            return;
-        }
-
-        $abbonamento = $appuntamento->relationLoaded('abbonamento')
-            ? $appuntamento->abbonamento
-            : $appuntamento->abbonamento()->with('servizio')->first();
-
-        $servizio = $abbonamento?->servizio;
-
-        if (! $servizio) {
-            return;
-        }
-
-        $appuntamento->tipo_appuntamento = $servizio->tipo_appuntamento_default ?? 'personal';
-        $appuntamento->evento_intera_giornata = (bool) ($servizio->evento_intera_giornata_default ?? false);
-
-        if ($appuntamento->evento_intera_giornata) {
-            $appuntamento->durata = 1440;
-        } elseif ((int) ($appuntamento->durata ?? 0) === 1440 || blank($appuntamento->durata)) {
-            $appuntamento->durata = 60;
-        }
     }
 }
