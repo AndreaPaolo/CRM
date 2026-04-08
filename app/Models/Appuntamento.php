@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -65,46 +66,11 @@ class Appuntamento extends Model
     protected static function booted(): void
     {
         static::creating(function (Appuntamento $appuntamento) {
-            if (! $appuntamento->user_id && auth()->check()) {
-                $appuntamento->user_id = auth()->id();
-            }
-
-            if (! $appuntamento->numerazione) {
-                $appuntamento->numerazione = 0;
-            }
-
-            if (blank($appuntamento->tipo_appuntamento)) {
-                $appuntamento->tipo_appuntamento = 'personal';
-            }
-
-            if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
-                $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
-                $appuntamento->durata = 1440;
-            }
-
-            $appuntamento->calendar_sync_status = 'dirty';
-            $appuntamento->calendar_last_error = null;
+            self::normalizeBeforeSave($appuntamento, true);
         });
 
         static::updating(function (Appuntamento $appuntamento) {
-            if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
-                $appuntamento->data_ora = \Carbon\Carbon::parse($appuntamento->data_ora)->startOfDay();
-                $appuntamento->durata = 1440;
-            }
-
-            if ($appuntamento->isDirty([
-                'cliente_id',
-                'abbonamento_id',
-                'data_ora',
-                'durata',
-                'descrizione',
-                'numerazione',
-                'tipo_appuntamento',
-                'evento_intera_giornata',
-            ])) {
-                $appuntamento->calendar_sync_status = 'dirty';
-                $appuntamento->calendar_last_error = null;
-            }
+            self::normalizeBeforeSave($appuntamento, false);
         });
 
         static::saved(function (Appuntamento $appuntamento) {
@@ -143,6 +109,66 @@ class Appuntamento extends Model
             } catch (\Throwable $e) {
                 //
             }
+
+            $abbonamento = $appuntamento->abbonamento;
+
+            if ($abbonamento) {
+                $abbonamento->aggiornaNumerazioneAppuntamenti();
+                $abbonamento->aggiornaStatoTerminato();
+            }
         });
+    }
+
+    protected static function normalizeBeforeSave(Appuntamento $appuntamento, bool $isCreating): void
+    {
+        if (! $appuntamento->user_id && auth()->check()) {
+            $appuntamento->user_id = auth()->id();
+        }
+
+        if (blank($appuntamento->tipo_appuntamento)) {
+            $appuntamento->tipo_appuntamento = 'personal';
+        }
+
+        if ($appuntamento->tipo_appuntamento === 'consegna_programma') {
+            $appuntamento->evento_intera_giornata = true;
+            $appuntamento->durata = 1440;
+        } else {
+            $appuntamento->evento_intera_giornata = false;
+
+            if ((int) ($appuntamento->durata ?? 0) <= 0 || (int) ($appuntamento->durata ?? 0) === 1440) {
+                $appuntamento->durata = 60;
+            }
+        }
+
+        if ($appuntamento->evento_intera_giornata && $appuntamento->data_ora) {
+            $appuntamento->data_ora = Carbon::parse($appuntamento->data_ora)->startOfDay();
+        }
+
+        if ($appuntamento->tipo_appuntamento !== 'personal') {
+            $appuntamento->numerazione = null;
+        }
+
+        if ($isCreating && blank($appuntamento->numerazione) && $appuntamento->tipo_appuntamento === 'personal') {
+            $appuntamento->numerazione = 0;
+        }
+
+        if ($isCreating) {
+            $appuntamento->calendar_sync_status = 'dirty';
+            $appuntamento->calendar_last_error = null;
+        }
+
+        if ($appuntamento->isDirty([
+            'cliente_id',
+            'abbonamento_id',
+            'data_ora',
+            'durata',
+            'descrizione',
+            'numerazione',
+            'tipo_appuntamento',
+            'evento_intera_giornata',
+        ])) {
+            $appuntamento->calendar_sync_status = 'dirty';
+            $appuntamento->calendar_last_error = null;
+        }
     }
 }

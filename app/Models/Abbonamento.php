@@ -101,59 +101,65 @@ class Abbonamento extends Model
     public function aggiornaStatoTerminato(): void
     {
         if ($this->terminato_manualmente) {
-            $this->terminato = true;
-            $this->saveQuietly();
+            $this->updateQuietly([
+                'terminato' => true,
+            ]);
 
             return;
         }
 
-        $totaleIncontri = (int) ($this->servizio?->incontri ?? 0);
+        $this->loadMissing('servizio');
 
-        $sessioni = $this->appuntamenti()
-            ->get()
-            ->map(fn ($appuntamento) => $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id)
-            ->unique()
+        if (! $this->servizio) {
+            return;
+        }
+
+        if ($this->servizio->tipo_fatturazione === 'mensile') {
+            $terminato = $this->data_fine ? $this->data_fine->isPast() : false;
+
+            $this->updateQuietly([
+                'terminato' => $terminato,
+            ]);
+
+            return;
+        }
+
+        $totalePrevisto = (int) ($this->servizio->incontri ?? 0);
+
+        if ($totalePrevisto <= 0) {
+            return;
+        }
+
+        $totalePersonalUsati = $this->appuntamenti()
+            ->where('tipo_appuntamento', 'personal')
             ->count();
 
-        if ($totaleIncontri > 0) {
-            $terminatoPerLezioni = $sessioni >= $totaleIncontri;
-            $terminatoPerData = $this->data_fine
-                && now()->startOfDay()->gt(Carbon::parse($this->data_fine)->startOfDay());
-
-            $this->terminato = $terminatoPerLezioni || $terminatoPerData;
-            $this->saveQuietly();
-
-            return;
-        }
-
-        $this->terminato = false;
-        $this->saveQuietly();
+        $this->updateQuietly([
+            'terminato' => $totalePersonalUsati >= $totalePrevisto,
+        ]);
     }
 
     public function aggiornaNumerazioneAppuntamenti(): void
     {
-        $appuntamenti = Appuntamento::query()
-            ->where('abbonamento_id', $this->id)
+        $appuntamenti = $this->appuntamenti()
             ->orderBy('data_ora')
             ->orderBy('id')
             ->get();
 
-        $sessioni = [];
-        $numeroCorrente = 0;
+        $counterPersonal = 0;
 
         foreach ($appuntamenti as $appuntamento) {
-            $chiaveSessione = $appuntamento->sessione_condivisa_uuid ?: 'single_' . $appuntamento->id;
+            $nuovaNumerazione = null;
 
-            if (! array_key_exists($chiaveSessione, $sessioni)) {
-                $numeroCorrente++;
-                $sessioni[$chiaveSessione] = $numeroCorrente;
+            if (($appuntamento->tipo_appuntamento ?? 'personal') === 'personal') {
+                $counterPersonal++;
+                $nuovaNumerazione = $counterPersonal;
             }
 
-            $nuovoNumero = $sessioni[$chiaveSessione];
-
-            if ((int) $appuntamento->numerazione !== $nuovoNumero) {
-                $appuntamento->numerazione = $nuovoNumero;
-                $appuntamento->saveQuietly();
+            if ($appuntamento->numerazione !== $nuovaNumerazione) {
+                $appuntamento->updateQuietly([
+                    'numerazione' => $nuovaNumerazione,
+                ]);
             }
         }
     }
