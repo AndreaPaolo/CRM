@@ -5,25 +5,62 @@ namespace App\Services;
 use App\Models\Appuntamento;
 use Google\Client;
 use Google\Service\Calendar;
-use Google\Service\Calendar\Event;
-use Google\Service\Calendar\EventDateTime;
 use Throwable;
 
 class GoogleCalendarService
 {
     protected Calendar $calendar;
+
     protected string $calendarId;
 
-    public function __construct() {
+    public function __construct()
+    {
         $client = new Client();
         $client->setApplicationName(config('app.name'));
         $client->setScopes([Calendar::CALENDAR]);
         $client->setAuthConfig(storage_path('app/credentials.json'));
+        $client->setAccessType('offline');
+        $client->setPrompt('consent');
 
         $tokenPath = storage_path('app/token.json');
 
-        if (file_exists($tokenPath)) {
-            $client->setAccessToken(json_decode(file_get_contents($tokenPath), true));
+        if (! file_exists($tokenPath)) {
+            throw new \RuntimeException('token.json non trovato. Esegui php artisan google:calendar-auth');
+        }
+
+        $token = json_decode(file_get_contents($tokenPath), true);
+
+        if (! is_array($token)) {
+            throw new \RuntimeException('token.json non valido.');
+        }
+
+        $client->setAccessToken($token);
+
+        if ($client->isAccessTokenExpired()) {
+            $refreshToken = $client->getRefreshToken() ?: ($token['refresh_token'] ?? null);
+
+            if (! $refreshToken) {
+                throw new \RuntimeException('Refresh token mancante o scaduto. Esegui di nuovo php artisan google:calendar-auth');
+            }
+
+            $newToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
+
+            if (isset($newToken['error'])) {
+                throw new \RuntimeException('Refresh token non valido o revocato: ' . json_encode($newToken));
+            }
+
+            $token = array_merge($token, $newToken);
+
+            if (empty($token['refresh_token'])) {
+                $token['refresh_token'] = $refreshToken;
+            }
+
+            file_put_contents(
+                $tokenPath,
+                json_encode($token, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            );
+
+            $client->setAccessToken($token);
         }
 
         $this->calendar = new Calendar($client);
@@ -35,7 +72,6 @@ class GoogleCalendarService
         $appuntamento->loadMissing(['cliente', 'abbonamento.servizio', 'pt']);
 
         $eventId = $appuntamento->google_calendar_event_id ?: $this->buildEventId($appuntamento);
-
         $isAllDay = (bool) $appuntamento->evento_intera_giornata;
         $shouldCreateMeet = $this->shouldCreateMeet($appuntamento);
 
@@ -71,12 +107,14 @@ class GoogleCalendarService
         }
 
         $attendees = [];
+
         if (! empty($appuntamento->cliente?->email) && filter_var($appuntamento->cliente->email, FILTER_VALIDATE_EMAIL)) {
             $attendees[] = [
                 'email' => $appuntamento->cliente->email,
                 'displayName' => trim(($appuntamento->cliente->nome ?? '') . ' ' . ($appuntamento->cliente->cognome ?? '')),
             ];
         }
+
         $payload['attendees'] = $attendees;
 
         if ($shouldCreateMeet) {
@@ -139,7 +177,8 @@ class GoogleCalendarService
         }
     }
 
-    public function deleteAppuntamento(Appuntamento $appuntamento): void {
+    public function deleteAppuntamento(Appuntamento $appuntamento): void
+    {
         $eventId = $appuntamento->google_calendar_event_id ?: $this->buildEventId($appuntamento);
 
         try {
@@ -198,11 +237,13 @@ class GoogleCalendarService
         return (bool) ($servizio->crea_google_meet_default ?? false);
     }
 
-    protected function buildEventId(Appuntamento $appuntamento): string {
+    protected function buildEventId(Appuntamento $appuntamento): string
+    {
         return 'app' . str_pad((string) $appuntamento->id, 10, '0', STR_PAD_LEFT);
     }
 
-    public function deleteOrphanCalendarEvents(): int {
+    public function deleteOrphanCalendarEvents(): int
+    {
         $deleted = 0;
         $pageToken = null;
         $eventsToDelete = [];
@@ -247,7 +288,8 @@ class GoogleCalendarService
         return $deleted;
     }
 
-    public function syncPagamento(\App\Models\Pagamento $pagamento): void {
+    public function syncPagamento(\App\Models\Pagamento $pagamento): void
+    {
         if (! $pagamento->scadenza) {
             return;
         }
@@ -316,7 +358,8 @@ class GoogleCalendarService
         }
     }
 
-    public function deletePagamento(\App\Models\Pagamento $pagamento): void {
+    public function deletePagamento(\App\Models\Pagamento $pagamento): void
+    {
         if (! $pagamento->google_calendar_event_id) {
             return;
         }
@@ -368,8 +411,8 @@ class GoogleCalendarService
         return implode("\n", $righe);
     }
 
-    protected function buildPagamentoEventId(\App\Models\Pagamento $pagamento): string {
+    protected function buildPagamentoEventId(\App\Models\Pagamento $pagamento): string
+    {
         return 'pay' . strtolower(base_convert((string) $pagamento->id, 10, 32));
     }
-    
 }
