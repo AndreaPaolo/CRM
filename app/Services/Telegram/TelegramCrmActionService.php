@@ -106,7 +106,6 @@ class TelegramCrmActionService
         [$hour, $minute] = explode(':', $ora);
         $dataOra = $giorno->copy()->setTime((int) $hour, (int) $minute);
 
-        // SMALLGROUP: crea un appuntamento per ogni cliente collegato all'abbonamento
         if ($this->isSmallGroupAbbonamento($abbonamento)) {
             $partecipanti = $this->getPartecipantiAbbonamento($abbonamento);
 
@@ -115,12 +114,16 @@ class TelegramCrmActionService
             }
 
             $uuid = (string) Str::uuid();
-            $created = collect();
+            $creati = collect();
 
             foreach ($partecipanti as $partecipante) {
+                $abbonamentoPartecipante = method_exists($partecipante, 'ultimoAbbonamentoAttivo')
+                    ? ($partecipante->ultimoAbbonamentoAttivo() ?: $abbonamento)
+                    : $abbonamento;
+
                 $appuntamento = Appuntamento::create([
                     'cliente_id' => $partecipante->id,
-                    'abbonamento_id' => $abbonamento->id,
+                    'abbonamento_id' => $abbonamentoPartecipante?->id ?? $abbonamento->id,
                     'user_id' => auth()->id() ?? 1,
                     'data_ora' => $dataOra,
                     'durata' => 60,
@@ -130,14 +133,14 @@ class TelegramCrmActionService
                     'sessione_condivisa_uuid' => $uuid,
                 ]);
 
-                $created->push($appuntamento);
+                $creati->push($appuntamento);
             }
 
             $nomi = $partecipanti
                 ->map(fn ($c) => trim(($c->nome ?? '') . ' ' . ($c->cognome ?? '')))
                 ->implode(', ');
 
-            return "Creato smallgroup {$this->formatTipo($tipo)} per {$created->count()} partecipanti il {$dataOra->format('d/m/Y H:i')}: {$nomi}.";
+            return "Creato smallgroup {$this->formatTipo($tipo)} per {$creati->count()} partecipanti il {$dataOra->format('d/m/Y H:i')}: {$nomi}.";
         }
 
         $appuntamento = Appuntamento::create([
@@ -201,11 +204,15 @@ class TelegramCrmActionService
             $updates['durata'] = (int) $params['durata'];
         }
 
+        if (! empty($params['nuova_ora'])) {
+            [$hour, $minute] = explode(':', $params['nuova_ora']);
+            $updates['data_ora'] = $appuntamento->data_ora->copy()->setTime((int) $hour, (int) $minute);
+        }
+
         if (empty($updates)) {
             return 'Nessuna modifica da applicare.';
         }
 
-        // SMALLGROUP: aggiorna tutti i collegati
         if ($appuntamento->sessione_condivisa_uuid) {
             Appuntamento::query()
                 ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
@@ -223,11 +230,9 @@ class TelegramCrmActionService
     {
         $appuntamento = $this->findSingleAppointmentOrFail($params);
 
-        // SMALLGROUP: elimina tutti i collegati
         if ($appuntamento->sessione_condivisa_uuid) {
             $count = Appuntamento::query()
                 ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
-                ->get()
                 ->count();
 
             Appuntamento::query()
