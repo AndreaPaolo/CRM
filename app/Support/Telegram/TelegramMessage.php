@@ -10,6 +10,8 @@ class TelegramMessage
         public readonly ?string $userId,
         public readonly ?string $messageId,
         public readonly ?string $text,
+        public readonly ?string $voiceFileId,
+        public readonly ?string $audioFileId,
         public readonly array $payload,
     ) {}
 }

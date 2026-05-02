@@ -3,8 +3,9 @@
 namespace App\Services\Telegram;
 
 use App\Models\TelegramUpdate;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
+use RuntimeException;
 
 class TelegramBotService
 {
@@ -15,7 +16,7 @@ class TelegramBotService
         $token = (string) config('services.telegram.bot_token');
 
         if (blank($token)) {
-            throw new \RuntimeException('TELEGRAM_BOT_TOKEN mancante.');
+            throw new RuntimeException('TELEGRAM_BOT_TOKEN mancante.');
         }
 
         $this->baseUrl = "https://api.telegram.org/bot{$token}";
@@ -26,11 +27,28 @@ class TelegramBotService
         $payload = array_merge([
             'chat_id' => $chatId,
             'text' => $text,
-            'parse_mode' => 'HTML',
             'disable_web_page_preview' => true,
         ], $extra);
 
-        $response = Http::timeout(15)->post($this->baseUrl . '/sendMessage', $payload);
+        try {
+            $response = Http::connectTimeout(15)
+                ->timeout(45)
+                ->retry(3, 1000)
+                ->post($this->baseUrl . '/sendMessage', $payload);
+        } catch (ConnectionException $e) {
+            TelegramUpdate::create([
+                'direction' => 'outbound',
+                'kind' => 'message',
+                'chat_id' => $chatId,
+                'text' => $text,
+                'payload' => $payload,
+                'success' => false,
+                'error' => $e->getMessage(),
+                'handled_at' => now(),
+            ]);
+
+            throw new RuntimeException('Errore Telegram sendMessage: ' . $e->getMessage());
+        }
 
         TelegramUpdate::create([
             'direction' => 'outbound',
@@ -44,31 +62,7 @@ class TelegramBotService
         ]);
 
         if (! $response->successful()) {
-            throw new \RuntimeException('Errore Telegram sendMessage: ' . $response->body());
-        }
-
-        return $response->json();
-    }
-
-    public function setWebhook(string $url): array
-    {
-        $response = Http::timeout(20)->post($this->baseUrl . '/setWebhook', [
-            'url' => $url,
-        ]);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('Errore setWebhook: ' . $response->body());
-        }
-
-        return $response->json();
-    }
-
-    public function deleteWebhook(): array
-    {
-        $response = Http::timeout(20)->post($this->baseUrl . '/deleteWebhook');
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('Errore deleteWebhook: ' . $response->body());
+            throw new RuntimeException('Errore Telegram sendMessage: ' . $response->body());
         }
 
         return $response->json();
@@ -76,10 +70,27 @@ class TelegramBotService
 
     public function getMe(): array
     {
-        $response = Http::timeout(15)->get($this->baseUrl . '/getMe');
+        $response = Http::connectTimeout(15)
+            ->timeout(30)
+            ->retry(2, 1000)
+            ->get($this->baseUrl . '/getMe');
 
         if (! $response->successful()) {
-            throw new \RuntimeException('Errore getMe: ' . $response->body());
+            throw new RuntimeException('Errore getMe: ' . $response->body());
+        }
+
+        return $response->json();
+    }
+
+    public function deleteWebhook(): array
+    {
+        $response = Http::connectTimeout(15)
+            ->timeout(30)
+            ->retry(2, 1000)
+            ->post($this->baseUrl . '/deleteWebhook');
+
+        if (! $response->successful()) {
+            throw new RuntimeException('Errore deleteWebhook: ' . $response->body());
         }
 
         return $response->json();

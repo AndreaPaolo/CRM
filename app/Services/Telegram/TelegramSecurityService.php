@@ -6,24 +6,25 @@ class TelegramSecurityService
 {
     public function isEnabled(): bool
     {
-        return (bool) config('services.telegram.enabled');
+        return (bool) config('services.telegram.enabled', false);
     }
 
-    public function secretIsValid(?string $secret): bool
+    public function userIsAllowed(?string $userId): bool
     {
-        $expected = (string) config('services.telegram.webhook_secret');
+        if (! $this->isEnabled()) {
+            return false;
+        }
 
-        return filled($expected) && hash_equals($expected, (string) $secret);
-    }
+        if (! $userId) {
+            return false;
+        }
 
-    public function userIsAllowed(?string $telegramUserId): bool
-    {
         $allowed = config('services.telegram.allowed_user_ids', []);
 
         if (empty($allowed)) {
             return false;
         }
 
-        return in_array((string) $telegramUserId, array_map('strval', $allowed), true);
+        return in_array((string) $userId, array_map('strval', $allowed), true);
     }
 }

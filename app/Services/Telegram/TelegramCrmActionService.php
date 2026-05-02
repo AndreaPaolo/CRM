@@ -2,12 +2,14 @@
 
 namespace App\Services\Telegram;
 
+use App\Models\Abbonamento;
 use App\Models\Appuntamento;
 use App\Models\Cliente;
 use App\Models\Pagamento;
+use App\Models\Servizio;
 use Carbon\Carbon;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Collection;
+use RuntimeException;
+use Illuminate\Support\Facades\Schema;
 
 class TelegramCrmActionService
 {
@@ -15,20 +17,30 @@ class TelegramCrmActionService
         protected TelegramIntentParserService $parser,
     ) {}
 
-    public function execute(string $intentName, array $params = []): string
+    public function execute(string $intentName, array $params = []): array|string
     {
         return match ($intentName) {
             'agenda_oggi' => $this->agenda(now()),
             'agenda_domani' => $this->agenda(now()->addDay()),
-            'cerca_cliente' => $this->cercaCliente($params['cliente'] ?? ''),
-            'pagamenti_aperti' => $this->pagamentiAperti(),
+            'agenda_data' => $this->agendaData($params),
+
             'crea_appuntamento' => $this->creaAppuntamento($params, 'personal'),
             'crea_call' => $this->creaAppuntamento($params, 'call_google_meet'),
             'crea_consegna' => $this->creaConsegna($params),
-            'sposta_appuntamento' => $this->spostaAppuntamento($params),
-            'elimina_appuntamento' => $this->eliminaAppuntamento((int) ($params['appuntamento_id'] ?? 0)),
-            'segna_pagato' => $this->segnaPagato($params),
-            'reminder_domani' => $this->reminderDomani(),
+            'modifica_appuntamento' => $this->modificaAppuntamentoContext($params),
+            'elimina_appuntamento_ctx' => $this->eliminaAppuntamentoContext($params),
+
+            'lista_prossimi_appuntamenti_cliente' => $this->listaProssimiAppuntamentiCliente($params),
+
+            'pagamenti_aperti' => $this->pagamentiAperti(),
+            'pagamenti_cliente' => $this->pagamentiCliente($params),
+            'segna_pagato_cliente' => $this->segnaPagatoCliente($params),
+
+            'assegna_abbonamento' => $this->assegnaAbbonamento($params),
+            'renew_google' => $this->renewGoogle(),
+            'sync_google_status' => $this->syncGoogleStatus(),
+            'aggiorna_abbonamenti_mensili' => $this->aggiornaAbbonamentiMensili(),
+
             default => 'Comando non riconosciuto.',
         };
     }
@@ -42,86 +54,54 @@ class TelegramCrmActionService
             ->get();
 
         if ($items->isEmpty()) {
-            return "Nessun appuntamento per il " . $day->format('d/m/Y') . '.';
+            return "Nessun appuntamento per il {$day->format('d/m/Y')}.";
         }
 
-        $lines = ["Appuntamenti del " . $day->format('d/m/Y') . ':'];
+        $lines = ["Agenda {$day->format('d/m/Y')}:"];
 
         foreach ($items as $item) {
             $cliente = trim(($item->cliente?->nome ?? '') . ' ' . ($item->cliente?->cognome ?? ''));
-            $servizio = $item->abbonamento?->servizio?->nome ?? '-';
+            $tipo = $this->formatTipo($item->tipo_appuntamento);
             $ora = $item->evento_intera_giornata ? 'giornata intera' : $item->data_ora?->format('H:i');
+            $numeroLezione = $this->formatNumeroLezione($item);
 
-            $lines[] = "#{$item->id} · {$ora} · {$cliente} · {$servizio}";
+            $lines[] = "#{$item->id} · {$ora} · {$tipo} · {$cliente} · {$numeroLezione}";
         }
 
         return implode("\n", $lines);
     }
 
-    protected function cercaCliente(string $query): string
+    protected function agendaData(array $params): string
     {
-        $query = trim($query);
+        $data = $params['data'] ?? null;
 
-        if ($query === '') {
-            return 'Inserisci un nome cliente da cercare.';
+        if (! $data) {
+            return 'Data mancante.';
         }
 
-        $clienti = $this->searchClienti($query, 5);
-
-        if ($clienti->isEmpty()) {
-            return "Nessun cliente trovato per: {$query}";
-        }
-
-        $lines = ['Clienti trovati:'];
-
-        foreach ($clienti as $cliente) {
-            $abbonamento = $cliente->ultimoAbbonamentoAttivo();
-            $servizio = $abbonamento?->servizio?->nome ?? 'nessun abbonamento attivo';
-
-            $lines[] = "#{$cliente->id} · {$cliente->nome} {$cliente->cognome} · {$servizio}";
-        }
-
-        return implode("\n", $lines);
-    }
-
-    protected function pagamentiAperti(): string
-    {
-        $pagamenti = Pagamento::query()
-            ->with(['cliente', 'abbonamento.servizio'])
-            ->whereIn('stato', ['da_pagare', 'parziale'])
-            ->orderBy('scadenza')
-            ->limit(10)
-            ->get();
-
-        if ($pagamenti->isEmpty()) {
-            return 'Nessun pagamento aperto.';
-        }
-
-        $lines = ['Pagamenti aperti:'];
-
-        foreach ($pagamenti as $pagamento) {
-            $cliente = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
-            $servizio = $pagamento->abbonamento?->servizio?->nome ?? '-';
-            $importo = number_format((float) $pagamento->importo_previsto, 2, ',', '.');
-            $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
-
-            $lines[] = "#{$pagamento->id} · {$cliente} · € {$importo} · {$scadenza} · {$servizio}";
-        }
-
-        return implode("\n", $lines);
+        return $this->agenda($this->parser->resolveDate($data));
     }
 
     protected function creaAppuntamento(array $params, string $tipo): string
     {
         $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
-        $abbonamento = $cliente->ultimoAbbonamentoAttivo();
+        $abbonamento = method_exists($cliente, 'ultimoAbbonamentoAttivo')
+            ? $cliente->ultimoAbbonamentoAttivo()
+            : null;
 
         if (! $abbonamento) {
             return "Cliente trovato, ma senza abbonamento attivo: {$cliente->nome} {$cliente->cognome}";
         }
 
-        $giorno = $this->parser->resolveDate($params['giorno']);
-        [$hour, $minute] = explode(':', $params['ora']);
+        $data = $params['data'] ?? null;
+        $ora = $params['ora'] ?? null;
+
+        if (! $data || ! $ora) {
+            return 'Data o ora mancanti.';
+        }
+
+        $giorno = $this->parser->resolveDate($data);
+        [$hour, $minute] = explode(':', $ora);
         $dataOra = $giorno->copy()->setTime((int) $hour, (int) $minute);
 
         $appuntamento = Appuntamento::create([
@@ -135,19 +115,27 @@ class TelegramCrmActionService
             'evento_intera_giornata' => false,
         ]);
 
-        return "Creato appuntamento #{$appuntamento->id} per {$cliente->nome} {$cliente->cognome} il {$dataOra->format('d/m/Y H:i')}.";
+        return "Creato {$this->formatTipo($tipo)} #{$appuntamento->id} per {$cliente->nome} {$cliente->cognome} il {$dataOra->format('d/m/Y H:i')}.";
     }
 
     protected function creaConsegna(array $params): string
     {
         $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
-        $abbonamento = $cliente->ultimoAbbonamentoAttivo();
+        $abbonamento = method_exists($cliente, 'ultimoAbbonamentoAttivo')
+            ? $cliente->ultimoAbbonamentoAttivo()
+            : null;
 
         if (! $abbonamento) {
             return "Cliente trovato, ma senza abbonamento attivo: {$cliente->nome} {$cliente->cognome}";
         }
 
-        $giorno = $this->parser->resolveDate($params['giorno'])->startOfDay();
+        $data = $params['data'] ?? null;
+
+        if (! $data) {
+            return 'Data mancante.';
+        }
+
+        $giorno = $this->parser->resolveDate($data)->startOfDay();
 
         $appuntamento = Appuntamento::create([
             'cliente_id' => $cliente->id,
@@ -163,85 +151,358 @@ class TelegramCrmActionService
         return "Creata consegna programma #{$appuntamento->id} per {$cliente->nome} {$cliente->cognome} il {$giorno->format('d/m/Y')}.";
     }
 
-    protected function spostaAppuntamento(array $params): string
+    protected function modificaAppuntamentoContext(array $params): string
     {
-        $appuntamento = Appuntamento::query()->find((int) ($params['appuntamento_id'] ?? 0));
+        $appuntamento = $this->findSingleAppointmentOrFail($params);
 
-        if (! $appuntamento) {
-            return 'Appuntamento non trovato.';
+        $updates = [];
+
+        if (! empty($params['descrizione'])) {
+            $updates['descrizione'] = $params['descrizione'];
         }
 
-        $giorno = $this->parser->resolveDate($params['giorno']);
-        [$hour, $minute] = explode(':', $params['ora']);
-        $dataOra = $giorno->copy()->setTime((int) $hour, (int) $minute);
+        if (! empty($params['durata'])) {
+            $updates['durata'] = (int) $params['durata'];
+        }
 
-        $appuntamento->update([
-            'data_ora' => $dataOra,
-        ]);
+        if (empty($updates)) {
+            return 'Nessuna modifica da applicare.';
+        }
 
-        return "Appuntamento #{$appuntamento->id} spostato al {$dataOra->format('d/m/Y H:i')}.";
+        $appuntamento->update($updates);
+
+        return "Appuntamento #{$appuntamento->id} modificato con successo.";
     }
 
-    protected function eliminaAppuntamento(int $id): string
+    protected function eliminaAppuntamentoContext(array $params): string
     {
-        $appuntamento = Appuntamento::query()->find($id);
+        $appuntamento = $this->findSingleAppointmentOrFail($params);
 
-        if (! $appuntamento) {
-            return 'Appuntamento non trovato.';
-        }
-
+        $id = $appuntamento->id;
         $appuntamento->delete();
 
         return "Appuntamento #{$id} eliminato.";
     }
 
-    protected function segnaPagato(array $params): string
+    protected function listaProssimiAppuntamentiCliente(array $params): string
     {
-        $pagamento = Pagamento::query()->find((int) ($params['pagamento_id'] ?? 0));
+        $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
 
-        if (! $pagamento) {
-            return 'Pagamento non trovato.';
-        }
-
-        $importo = $params['importo'] ?? null;
-        $importoPagato = $importo ?: (float) $pagamento->importo_previsto;
-
-        $pagamento->update([
-            'importo_pagato' => $importoPagato,
-        ]);
-
-        $pagamento->aggiornaStato();
-
-        return "Pagamento #{$pagamento->id} aggiornato. Stato: {$pagamento->stato}.";
-    }
-
-    protected function reminderDomani(): string
-    {
         $items = Appuntamento::query()
-            ->with(['cliente', 'abbonamento.servizio'])
-            ->whereDate('data_ora', now()->addDay()->toDateString())
+            ->with(['abbonamento.servizio'])
+            ->where('cliente_id', $cliente->id)
+            ->where('data_ora', '>=', now())
             ->orderBy('data_ora')
             ->get();
 
         if ($items->isEmpty()) {
-            return 'Nessun reminder da preparare per domani.';
+            return "Nessun appuntamento futuro per {$cliente->nome} {$cliente->cognome}.";
         }
 
-        $lines = ['Reminder domani:'];
+        $lines = ["Appuntamenti di {$cliente->nome} {$cliente->cognome}:"];
 
         foreach ($items as $item) {
-            $telefono = preg_replace('/\D+/', '', (string) ($item->cliente?->telefono ?? ''));
-            $cliente = trim(($item->cliente?->nome ?? '') . ' ' . ($item->cliente?->cognome ?? ''));
-            $ora = $item->evento_intera_giornata ? 'giornata intera' : $item->data_ora?->format('H:i');
-            $servizio = $item->abbonamento?->servizio?->nome ?? 'appuntamento';
-
-            $messaggio = "Ciao {$cliente}, ti ricordo l'appuntamento di domani alle {$ora} per {$servizio}. A domani!";
-            $url = $telefono ? 'https://wa.me/' . $telefono . '?text=' . urlencode($messaggio) : 'telefono mancante';
-
-            $lines[] = "#{$item->id} · {$cliente} · {$url}";
+            $numeroLezione = $this->formatNumeroLezione($item);
+            $lines[] = "#{$item->id} · {$item->data_ora->format('d/m/Y H:i')} · {$this->formatTipo($item->tipo_appuntamento)} · {$numeroLezione}";
         }
 
         return implode("\n", $lines);
+    }
+
+    protected function pagamentiAperti(): string
+    {
+        $pagamenti = Pagamento::query()
+            ->with(['cliente', 'abbonamento.servizio'])
+            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
+            ->orderBy('scadenza')
+            ->get();
+
+        if ($pagamenti->isEmpty()) {
+            return 'Nessun pagamento trovato.';
+        }
+
+        $lines = ['Pagamenti:'];
+
+        foreach ($pagamenti as $pagamento) {
+            $cliente = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
+            $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+            $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
+            $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
+            $stato = $pagamento->stato ?? '-';
+
+            $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamento} · € {$importo} · {$scadenza} · {$stato}";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function pagamentiCliente(array $params): string
+    {
+        $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
+
+        $this->aggiornaImportoPersonalMensileSeNecessario($cliente);
+
+        $pagamenti = Pagamento::query()
+            ->with(['abbonamento.servizio'])
+            ->where('cliente_id', $cliente->id)
+            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
+            ->orderBy('scadenza')
+            ->get();
+
+        if ($pagamenti->isEmpty()) {
+            return "Nessun pagamento trovato per {$cliente->nome} {$cliente->cognome}.";
+        }
+
+        $lines = ["Pagamenti di {$cliente->nome} {$cliente->cognome}:"];
+
+        foreach ($pagamenti as $pagamento) {
+            $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+            $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
+            $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
+            $stato = $pagamento->stato ?? '-';
+
+            $lines[] = "#{$pagamento->id} · {$cliente->nome} {$cliente->cognome} · {$abbonamento} · € {$importo} · {$scadenza} · {$stato}";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function segnaPagatoCliente(array $params): string
+    {
+        $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
+        $pagamentoId = (int) ($params['pagamento_id'] ?? 0);
+
+        $pagamento = Pagamento::query()
+            ->where('id', $pagamentoId)
+            ->where('cliente_id', $cliente->id)
+            ->first();
+
+        if (! $pagamento) {
+            return "Pagamento non trovato per {$cliente->nome} {$cliente->cognome}: {$pagamentoId}";
+        }
+
+        $pagamento->update([
+            'importo_pagato' => (float) $pagamento->importo_previsto,
+            'stato' => 'pagato',
+        ]);
+
+        if (method_exists($pagamento, 'aggiornaStato')) {
+            $pagamento->aggiornaStato();
+        }
+
+        return "Pagamento #{$pagamento->id} segnato come pagato per {$cliente->nome} {$cliente->cognome}.";
+    }
+
+    protected function assegnaAbbonamento(array $params): string
+    {
+        $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
+        $servizioNome = trim((string) ($params['servizio'] ?? ''));
+        $dataInizio = $params['data_inizio'] ?? null;
+
+        if ($servizioNome === '' || ! $dataInizio) {
+            return 'Servizio o data inizio mancanti.';
+        }
+
+        $servizio = Servizio::query()
+            ->whereRaw('LOWER(nome) = ?', [mb_strtolower($servizioNome)])
+            ->first();
+
+        if (! $servizio) {
+            return "Servizio non trovato: {$servizioNome}";
+        }
+
+        $inizio = $this->parser->resolveDate($dataInizio)->startOfDay();
+        $fine = $servizio->durata ? $inizio->copy()->addDays((int) $servizio->durata) : null;
+
+        $abbonamento = Abbonamento::create([
+            'cliente_id' => $cliente->id,
+            'servizio_id' => $servizio->id,
+            'data_inizio' => $inizio->toDateString(),
+            'data_fine' => $fine?->toDateString(),
+            'prezzo' => 0,
+            'rate' => 1,
+            'terminato' => false,
+        ]);
+
+        return "Abbonamento assegnato: {$servizio->nome} a {$cliente->nome} {$cliente->cognome} dal {$inizio->format('d/m/Y')} (#{$abbonamento->id}).";
+    }
+
+    protected function renewGoogle(): string
+    {
+        return "Per rinnovare Google devi rieseguire l'autenticazione OAuth locale e generare un nuovo token. Questo comando è solo un promemoria operativo.";
+    }
+
+    protected function syncGoogleStatus(): string
+    {
+        $appuntamenti = Appuntamento::query()
+            ->with(['cliente'])
+            ->where(function ($query) {
+                $query->whereNull('calendar_sync_status')
+                    ->orWhereIn('calendar_sync_status', ['dirty', 'error', 'pending', 'not_synced']);
+            })
+            ->orderBy('data_ora')
+            ->limit(50)
+            ->get();
+
+        $lines = ['Sync Google:'];
+
+        if ($appuntamenti->isEmpty()) {
+            $lines[] = 'Appuntamenti non sincronizzati: nessuno';
+        } else {
+            $lines[] = 'Appuntamenti non sincronizzati:';
+            foreach ($appuntamenti as $appuntamento) {
+                $cliente = trim(($appuntamento->cliente?->nome ?? '') . ' ' . ($appuntamento->cliente?->cognome ?? ''));
+                $ora = $appuntamento->evento_intera_giornata ? 'giornata intera' : $appuntamento->data_ora?->format('d/m/Y H:i');
+                $tipo = $this->formatTipo($appuntamento->tipo_appuntamento);
+                $stato = $appuntamento->calendar_sync_status ?? 'null';
+
+                $lines[] = "#{$appuntamento->id} · {$ora} · {$tipo} · {$cliente} · {$stato}";
+            }
+        }
+
+        if (Schema::hasTable('pagamenti') && Schema::hasColumn('pagamenti', 'calendar_sync_status')) {
+            $pagamenti = Pagamento::query()
+                ->with(['cliente', 'abbonamento.servizio'])
+                ->where(function ($query) {
+                    $query->whereNull('calendar_sync_status')
+                        ->orWhereIn('calendar_sync_status', ['dirty', 'error', 'pending', 'not_synced']);
+                })
+                ->orderBy('scadenza')
+                ->limit(50)
+                ->get();
+
+            if ($pagamenti->isEmpty()) {
+                $lines[] = '';
+                $lines[] = 'Pagamenti non sincronizzati: nessuno';
+            } else {
+                $lines[] = '';
+                $lines[] = 'Pagamenti non sincronizzati:';
+                foreach ($pagamenti as $pagamento) {
+                    $cliente = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
+                    $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+                    $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
+                    $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
+                    $statoSync = $pagamento->calendar_sync_status ?? 'null';
+
+                    $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamento} · € {$importo} · {$scadenza} · {$statoSync}";
+                }
+            }
+        } else {
+            $lines[] = '';
+            $lines[] = 'Pagamenti non sincronizzati: campo calendar_sync_status non presente';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function aggiornaAbbonamentiMensili(): string
+    {
+        $abbonamenti = Abbonamento::query()
+            ->with(['cliente', 'servizio'])
+            ->where('terminato', false)
+            ->get()
+            ->filter(function ($abbonamento) {
+                $nomeServizio = mb_strtolower((string) ($abbonamento->servizio?->nome ?? ''));
+                return str_contains($nomeServizio, 'mensile');
+            })
+            ->values();
+
+        if ($abbonamenti->isEmpty()) {
+            return 'Nessun abbonamento mensile attivo trovato.';
+        }
+
+        $lines = ['Aggiornamento abbonamenti mensili:'];
+
+        foreach ($abbonamenti as $abbonamento) {
+            $cliente = trim(($abbonamento->cliente?->nome ?? '') . ' ' . ($abbonamento->cliente?->cognome ?? ''));
+            $servizio = $abbonamento->servizio?->nome ?? '-';
+
+            try {
+                $this->aggiornaAbbonamentoMensile($abbonamento);
+                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizio} · aggiornato";
+            } catch (\Throwable $e) {
+                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizio} · errore: {$e->getMessage()}";
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function aggiornaAbbonamentoMensile(Abbonamento $abbonamento): void
+    {
+        $cliente = $abbonamento->cliente;
+        $servizio = $abbonamento->servizio;
+
+        if (! $cliente || ! $servizio) {
+            return;
+        }
+
+        $nomeServizio = mb_strtolower((string) $servizio->nome);
+
+        if (! str_contains($nomeServizio, 'mensile')) {
+            return;
+        }
+
+        // Placeholder sicuro.
+        // Qui puoi aggiungere la logica reale di:
+        // - conteggio appuntamenti del mese
+        // - aggiornamento importo pagamento
+        // - generazione rate/scadenze
+    }
+
+    protected function aggiornaImportoPersonalMensileSeNecessario(Cliente $cliente): void
+    {
+        $abbonamento = method_exists($cliente, 'ultimoAbbonamentoAttivo')
+            ? $cliente->ultimoAbbonamentoAttivo()
+            : null;
+
+        if (! $abbonamento || ! $abbonamento->servizio) {
+            return;
+        }
+
+        $nomeServizio = mb_strtolower((string) $abbonamento->servizio->nome);
+
+        if (! str_contains($nomeServizio, 'personal mensile')) {
+            return;
+        }
+
+        // Placeholder sicuro.
+    }
+
+    protected function findSingleAppointmentOrFail(array $params): Appuntamento
+    {
+        $cliente = $this->findClienteOrFail($params['cliente'] ?? '');
+        $data = $params['data'] ?? null;
+
+        if (! $data) {
+            throw new RuntimeException('Data mancante.');
+        }
+
+        $giorno = $this->parser->resolveDate($data)->toDateString();
+
+        $query = Appuntamento::query()
+            ->where('cliente_id', $cliente->id)
+            ->whereDate('data_ora', $giorno);
+
+        if (! empty($params['tipo'])) {
+            $query->where('tipo_appuntamento', $params['tipo']);
+        }
+
+        if (! empty($params['ora'])) {
+            $query->whereTime('data_ora', $params['ora']);
+        }
+
+        $matches = $query->orderBy('data_ora')->get();
+
+        if ($matches->isEmpty()) {
+            throw new RuntimeException('Appuntamento non trovato.');
+        }
+
+        if ($matches->count() > 1) {
+            throw new RuntimeException("Trovati più appuntamenti. Specifica anche l'ora.");
+        }
+
+        return $matches->first();
     }
 
     protected function findClienteOrFail(string $query): Cliente
@@ -249,56 +510,56 @@ class TelegramCrmActionService
         $query = trim($query);
 
         if ($query === '') {
-            throw new \RuntimeException('Nome cliente mancante.');
+            throw new RuntimeException('Nome cliente mancante.');
         }
 
-        $clienti = $this->searchClienti($query, 2);
+        $normalizedQuery = $this->normalizeNameString($query);
 
-        if ($clienti->isEmpty()) {
-            throw new \RuntimeException("Cliente non trovato: {$query}");
+        $cliente = Cliente::query()
+            ->get()
+            ->first(function (Cliente $cliente) use ($normalizedQuery) {
+                $full = $this->normalizeNameString(trim(($cliente->nome ?? '') . ' ' . ($cliente->cognome ?? '')));
+                return $full === $normalizedQuery;
+            });
+
+        if (! $cliente) {
+            throw new RuntimeException("Cliente non trovato: {$query}");
         }
 
-        if ($clienti->count() > 1) {
-            $lista = $clienti
-                ->take(3)
-                ->map(fn (Cliente $cliente) => "#{$cliente->id} {$cliente->nome} {$cliente->cognome}")
-                ->implode(' | ');
-
-            throw new \RuntimeException("Ricerca ambigua per '{$query}'. Possibili match: {$lista}");
-        }
-
-        return $clienti->first();
+        return $cliente;
     }
 
-    protected function searchClienti(string $query, int $limit = 5): Collection
+    protected function normalizeNameString(string $value): string
     {
-        $query = trim($query);
-        $tokens = collect(preg_split('/\s+/u', $query))
-            ->filter()
-            ->values();
+        $value = mb_strtolower(trim($value));
+        $value = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
+        $value = preg_replace('/[^a-z0-9\s]/', ' ', $value) ?? $value;
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+        return trim($value);
+    }
 
-        return Cliente::query()
-            ->where(function (Builder $builder) use ($query, $tokens) {
-                $builder
-                    ->whereRaw("CONCAT(nome, ' ', cognome) LIKE ?", ['%' . $query . '%'])
-                    ->orWhereRaw("CONCAT(cognome, ' ', nome) LIKE ?", ['%' . $query . '%'])
-                    ->orWhere('nome', 'like', '%' . $query . '%')
-                    ->orWhere('cognome', 'like', '%' . $query . '%');
+    protected function formatTipo(?string $tipo): string
+    {
+        return match ($tipo) {
+            'call_google_meet' => 'Call',
+            'consegna_programma' => 'Consegna',
+            default => 'Personal',
+        };
+    }
 
-                if ($tokens->isNotEmpty()) {
-                    $builder->orWhere(function (Builder $sub) use ($tokens) {
-                        foreach ($tokens as $token) {
-                            $sub->where(function (Builder $inner) use ($token) {
-                                $inner->where('nome', 'like', '%' . $token . '%')
-                                    ->orWhere('cognome', 'like', '%' . $token . '%');
-                            });
-                        }
-                    });
-                }
-            })
-            ->orderBy('nome')
-            ->orderBy('cognome')
-            ->limit($limit)
-            ->get();
+    protected function formatNumeroLezione(Appuntamento $appuntamento): string
+    {
+        $numero = $appuntamento->numerazione ?? null;
+        $totale = $appuntamento->abbonamento?->servizio?->incontri ?? null;
+
+        if ($numero && $totale) {
+            return "{$numero}/{$totale}";
+        }
+
+        if ($numero) {
+            return (string) $numero;
+        }
+
+        return '-';
     }
 }

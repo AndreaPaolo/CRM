@@ -1,11 +1,12 @@
 <?php
 
-use App\Http\Controllers\TelegramWebhookController;
-use Illuminate\Support\Facades\Route;
+use Illuminate\Foundation\Inspiring;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
-Route::get('/', function () {
-    return redirect('/admin');
-});
+Schedule::command('pagamenti:genera-mensili')->dailyAt('18:00');
+Schedule::command('pagamenti:genera-mensili')->monthlyOn(now()->endOfMonth()->day, '23:30');
 
-Route::post('/telegram/webhook/{secret}', TelegramWebhookController::class)
-    ->name('telegram.webhook');
+Artisan::command('inspire', function () {
+    $this->comment(Inspiring::quote());
+})->purpose('Display an inspiring quote');

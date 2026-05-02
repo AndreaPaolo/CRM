@@ -8,7 +8,6 @@ use Illuminate\Console\Command;
 class TelegramPollOnce extends Command
 {
     protected $signature = 'telegram:poll-once';
-
     protected $description = 'Esegue un singolo ciclo di polling Telegram';
 
     public function handle(TelegramPollingService $polling): int

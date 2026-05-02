@@ -31,7 +31,6 @@ return [
         'enabled' => env('TELEGRAM_ENABLED', false),
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'bot_username' => env('TELEGRAM_BOT_USERNAME'),
-        'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
         'allowed_user_ids' => array_values(array_filter(array_map(
             fn ($value) => trim($value),
             explode(',', (string) env('TELEGRAM_ALLOWED_USER_IDS', ''))

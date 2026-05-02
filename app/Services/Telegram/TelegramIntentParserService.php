@@ -9,112 +9,121 @@ class TelegramIntentParserService
 {
     public function parse(string $text): ?TelegramIntent
     {
-        $text = trim($text);
+        $text = $this->normalizeText($text);
+        $lower = mb_strtolower($text);
 
-        if ($text === '') {
-            return null;
-        }
-
-        $normalized = mb_strtolower($text);
-
-        if (in_array($normalized, ['agenda oggi', 'oggi'], true)) {
+        if ($lower === 'agenda oggi') {
             return new TelegramIntent('agenda_oggi');
         }
 
-        if (in_array($normalized, ['agenda domani', 'domani'], true)) {
+        if ($lower === 'agenda domani') {
             return new TelegramIntent('agenda_domani');
         }
 
-        if ($normalized === 'pagamenti aperti') {
+        if ($lower === 'pagamenti aperti') {
             return new TelegramIntent('pagamenti_aperti');
         }
 
-        if ($normalized === 'reminder domani') {
-            return new TelegramIntent(
-                'reminder_domani',
-                [],
-                false
-            );
+        if ($lower === 'renew google') {
+            return new TelegramIntent('renew_google');
         }
 
-        if (preg_match('/^cerca cliente\s+(.+)$/iu', $text, $matches)) {
-            return new TelegramIntent('cerca_cliente', [
-                'cliente' => trim($matches[1]),
+        if ($lower === 'sync google') {
+            return new TelegramIntent('sync_google_status');
+        }
+
+        if ($lower === 'aggiorna abbonamenti mensili') {
+            return new TelegramIntent('aggiorna_abbonamenti_mensili');
+        }
+
+        if (preg_match('/^agenda\s+(\d{2}-\d{2}-\d{4})$/iu', $text, $m)) {
+            return new TelegramIntent('agenda_data', [
+                'data' => trim($m[1]),
             ]);
         }
 
-        if (preg_match('/^elimina appuntamento\s+(\d+)$/iu', $text, $matches)) {
-            return new TelegramIntent(
-                'elimina_appuntamento',
-                ['appuntamento_id' => (int) $matches[1]],
-                true,
-                "Elimino l'appuntamento #{$matches[1]}"
-            );
+        if (preg_match('/^appuntamenti\s+(.+)$/iu', $text, $m)) {
+            return new TelegramIntent('lista_prossimi_appuntamenti_cliente', [
+                'cliente' => trim($m[1]),
+            ]);
         }
 
-        if (preg_match('/^segna pagato\s+(\d+)(?:\s+([\d\.,]+))?$/iu', $text, $matches)) {
-            $importo = isset($matches[2]) ? (float) str_replace(',', '.', $matches[2]) : null;
-
-            return new TelegramIntent(
-                'segna_pagato',
-                [
-                    'pagamento_id' => (int) $matches[1],
-                    'importo' => $importo,
-                ],
-                true,
-                "Segno pagato il pagamento #{$matches[1]}" . ($importo ? " per € {$importo}" : '')
-            );
+        if (preg_match('/^pagamenti\s+(.+)$/iu', $text, $m)) {
+            return new TelegramIntent('pagamenti_cliente', [
+                'cliente' => trim($m[1]),
+            ]);
         }
 
-        if (preg_match('/^sposta appuntamento\s+(\d+)\s+(.+)\s+(\d{1,2}:\d{2})$/iu', $text, $matches)) {
-            return new TelegramIntent(
-                'sposta_appuntamento',
-                [
-                    'appuntamento_id' => (int) $matches[1],
-                    'giorno' => trim($matches[2]),
-                    'ora' => trim($matches[3]),
-                ],
-                true,
-                "Sposto l'appuntamento #{$matches[1]} a {$matches[2]} {$matches[3]}"
-            );
+        if (preg_match('/^(.+)\s+pagato\s+(\d+)$/iu', $text, $m)) {
+            return new TelegramIntent('segna_pagato_cliente', [
+                'cliente' => trim($m[1]),
+                'pagamento_id' => (int) $m[2],
+            ]);
         }
 
-        if (preg_match('/^crea call\s+(.+?)\s+(oggi|domani|\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})$/iu', $text, $matches)) {
-            return new TelegramIntent(
-                'crea_call',
-                [
-                    'cliente' => trim($matches[1]),
-                    'giorno' => trim($matches[2]),
-                    'ora' => trim($matches[3]),
-                ],
-                true,
-                "Creo una call con {$matches[1]} il {$matches[2]} alle {$matches[3]}"
-            );
+        if (preg_match('/^assegna\s+(.+)\s+(.+)\s+(oggi|domani|\d{2}-\d{2}-\d{4})$/iu', $text, $m)) {
+            [$abbonamento, $cliente] = $this->splitAbbonamentoCliente(trim($m[1] . ' ' . $m[2]));
+
+            return new TelegramIntent('assegna_abbonamento', [
+                'servizio' => $abbonamento,
+                'cliente' => $cliente,
+                'data_inizio' => trim($m[3]),
+            ]);
         }
 
-        if (preg_match('/^crea appuntamento\s+(.+?)\s+(oggi|domani|\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})$/iu', $text, $matches)) {
-            return new TelegramIntent(
-                'crea_appuntamento',
-                [
-                    'cliente' => trim($matches[1]),
-                    'giorno' => trim($matches[2]),
-                    'ora' => trim($matches[3]),
-                ],
-                true,
-                "Creo un appuntamento con {$matches[1]} il {$matches[2]} alle {$matches[3]}"
-            );
+        if (preg_match('/^crea\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
+            $tipo = mb_strtolower(trim($m[1]));
+
+            return new TelegramIntent(match ($tipo) {
+                'personal' => 'crea_appuntamento',
+                'call' => 'crea_call',
+                'consegna' => 'crea_consegna',
+            }, [
+                'tipo' => match ($tipo) {
+                    'personal' => 'personal',
+                    'call' => 'call_google_meet',
+                    'consegna' => 'consegna_programma',
+                },
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'ora' => isset($m[4]) ? trim($m[4]) : null,
+            ]);
         }
 
-        if (preg_match('/^crea consegna\s+(.+?)\s+(oggi|domani|\d{4}-\d{2}-\d{2})$/iu', $text, $matches)) {
-            return new TelegramIntent(
-                'crea_consegna',
-                [
-                    'cliente' => trim($matches[1]),
-                    'giorno' => trim($matches[2]),
-                ],
-                true,
-                "Creo una consegna programma per {$matches[1]} il {$matches[2]}"
-            );
+        if (preg_match('/^elimina\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
+            return new TelegramIntent('elimina_appuntamento_ctx', [
+                'tipo' => $this->mapTipo(trim($m[1])),
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'ora' => isset($m[4]) ? trim($m[4]) : null,
+            ]);
+        }
+
+        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+descrizione\s+(.+)$/iu', $text, $m)) {
+            return new TelegramIntent('modifica_appuntamento', [
+                'tipo' => $this->mapTipo(trim($m[1])),
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'descrizione' => trim($m[4]),
+            ]);
+        }
+
+        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+durata\s+(\d+)$/iu', $text, $m)) {
+            return new TelegramIntent('modifica_appuntamento', [
+                'tipo' => $this->mapTipo(trim($m[1])),
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'durata' => (int) $m[4],
+            ]);
+        }
+
+        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+ora\s+(\d{2}:\d{2})$/iu', $text, $m)) {
+            return new TelegramIntent('sposta_appuntamento_ctx', [
+                'tipo' => $this->mapTipo(trim($m[1])),
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'nuova_ora' => trim($m[4]),
+            ]);
         }
 
         return null;
@@ -127,7 +136,37 @@ class TelegramIntentParserService
         return match ($value) {
             'oggi' => now(),
             'domani' => now()->addDay(),
-            default => Carbon::parse($value),
+            default => Carbon::createFromFormat('d-m-Y', $value),
         };
+    }
+
+    protected function mapTipo(string $tipo): string
+    {
+        return match (mb_strtolower($tipo)) {
+            'call' => 'call_google_meet',
+            'consegna' => 'consegna_programma',
+            default => 'personal',
+        };
+    }
+
+    protected function normalizeText(string $text): string
+    {
+        $text = str_replace(["\r", "\n", "\t"], ' ', $text);
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
+    }
+
+    protected function splitAbbonamentoCliente(string $value): array
+    {
+        $parts = preg_split('/\s+/', trim($value)) ?: [];
+
+        if (count($parts) < 3) {
+            return [$value, $value];
+        }
+
+        $cliente = implode(' ', array_slice($parts, -2));
+        $abbonamento = implode(' ', array_slice($parts, 0, -2));
+
+        return [$abbonamento, $cliente];
     }
 }
