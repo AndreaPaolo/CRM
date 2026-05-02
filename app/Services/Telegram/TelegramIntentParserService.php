@@ -71,35 +71,32 @@ class TelegramIntentParserService
             ]);
         }
 
-        if (preg_match('/^crea\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
-            $tipo = mb_strtolower(trim($m[1]));
+        if (preg_match('/^crea\s+(personal|call|consegna|smallgroup)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
+            $tipoInput = mb_strtolower(trim($m[1]));
 
-            return new TelegramIntent(match ($tipo) {
-                'personal' => 'crea_appuntamento',
-                'call' => 'crea_call',
-                'consegna' => 'crea_consegna',
-            }, [
-                'tipo' => match ($tipo) {
-                    'personal' => 'personal',
-                    'call' => 'call_google_meet',
-                    'consegna' => 'consegna_programma',
+            return new TelegramIntent(
+                match ($tipoInput) {
+                    'call' => 'crea_call',
+                    'consegna' => 'crea_consegna',
+                    'smallgroup' => 'crea_appuntamento',
+                    default => 'crea_appuntamento',
                 },
-                'cliente' => trim($m[2]),
-                'data' => trim($m[3]),
-                'ora' => isset($m[4]) ? trim($m[4]) : null,
-            ]);
+                [
+                    'tipo' => match ($tipoInput) {
+                        'call' => 'call_google_meet',
+                        'consegna' => 'consegna_programma',
+                        'smallgroup' => 'personal',
+                        default => 'personal',
+                    },
+                    'modalita_creazione' => $tipoInput === 'smallgroup' ? 'smallgroup' : 'standard',
+                    'cliente' => trim($m[2]),
+                    'data' => trim($m[3]),
+                    'ora' => isset($m[4]) ? trim($m[4]) : null,
+                ]
+            );
         }
 
-        if (preg_match('/^elimina\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
-            return new TelegramIntent('elimina_appuntamento_ctx', [
-                'tipo' => $this->mapTipo(trim($m[1])),
-                'cliente' => trim($m[2]),
-                'data' => trim($m[3]),
-                'ora' => isset($m[4]) ? trim($m[4]) : null,
-            ]);
-        }
-
-        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+descrizione\s+(.+)$/iu', $text, $m)) {
+        if (preg_match('/^modifica\s+(personal|call|consegna|smallgroup)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+descrizione\s+(.+)$/iu', $text, $m)) {
             return new TelegramIntent('modifica_appuntamento', [
                 'tipo' => $this->mapTipo(trim($m[1])),
                 'cliente' => trim($m[2]),
@@ -108,7 +105,7 @@ class TelegramIntentParserService
             ]);
         }
 
-        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+durata\s+(\d+)$/iu', $text, $m)) {
+        if (preg_match('/^modifica\s+(personal|call|consegna|smallgroup)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+durata\s+(\d+)$/iu', $text, $m)) {
             return new TelegramIntent('modifica_appuntamento', [
                 'tipo' => $this->mapTipo(trim($m[1])),
                 'cliente' => trim($m[2]),
@@ -117,12 +114,21 @@ class TelegramIntentParserService
             ]);
         }
 
-        if (preg_match('/^modifica\s+(personal|call|consegna)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+ora\s+(\d{2}:\d{2})$/iu', $text, $m)) {
-            return new TelegramIntent('sposta_appuntamento_ctx', [
+        if (preg_match('/^modifica\s+(personal|call|consegna|smallgroup)\s+(.+)\s+(\d{2}-\d{2}-\d{4})\s+ora\s+(\d{2}:\d{2})$/iu', $text, $m)) {
+            return new TelegramIntent('modifica_appuntamento', [
                 'tipo' => $this->mapTipo(trim($m[1])),
                 'cliente' => trim($m[2]),
                 'data' => trim($m[3]),
                 'nuova_ora' => trim($m[4]),
+            ]);
+        }
+
+        if (preg_match('/^elimina\s+(personal|call|consegna|smallgroup)\s+(.+)\s+(\d{2}-\d{2}-\d{4})(?:\s+ore\s+(\d{2}:\d{2}))?$/iu', $text, $m)) {
+            return new TelegramIntent('elimina_appuntamento_ctx', [
+                'tipo' => $this->mapTipo(trim($m[1])),
+                'cliente' => trim($m[2]),
+                'data' => trim($m[3]),
+                'ora' => isset($m[4]) ? trim($m[4]) : null,
             ]);
         }
 
@@ -145,6 +151,7 @@ class TelegramIntentParserService
         return match (mb_strtolower($tipo)) {
             'call' => 'call_google_meet',
             'consegna' => 'consegna_programma',
+            'smallgroup' => 'personal',
             default => 'personal',
         };
     }

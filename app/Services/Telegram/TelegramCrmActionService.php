@@ -8,8 +8,10 @@ use App\Models\Cliente;
 use App\Models\Pagamento;
 use App\Models\Servizio;
 use Carbon\Carbon;
-use RuntimeException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use RuntimeException;
 
 class TelegramCrmActionService
 {
@@ -104,6 +106,40 @@ class TelegramCrmActionService
         [$hour, $minute] = explode(':', $ora);
         $dataOra = $giorno->copy()->setTime((int) $hour, (int) $minute);
 
+        // SMALLGROUP: crea un appuntamento per ogni cliente collegato all'abbonamento
+        if ($this->isSmallGroupAbbonamento($abbonamento)) {
+            $partecipanti = $this->getPartecipantiAbbonamento($abbonamento);
+
+            if ($partecipanti->isEmpty()) {
+                $partecipanti = collect([$cliente]);
+            }
+
+            $uuid = (string) Str::uuid();
+            $created = collect();
+
+            foreach ($partecipanti as $partecipante) {
+                $appuntamento = Appuntamento::create([
+                    'cliente_id' => $partecipante->id,
+                    'abbonamento_id' => $abbonamento->id,
+                    'user_id' => auth()->id() ?? 1,
+                    'data_ora' => $dataOra,
+                    'durata' => 60,
+                    'descrizione' => 'Creato da bot Telegram: smallgroup',
+                    'tipo_appuntamento' => $tipo,
+                    'evento_intera_giornata' => false,
+                    'sessione_condivisa_uuid' => $uuid,
+                ]);
+
+                $created->push($appuntamento);
+            }
+
+            $nomi = $partecipanti
+                ->map(fn ($c) => trim(($c->nome ?? '') . ' ' . ($c->cognome ?? '')))
+                ->implode(', ');
+
+            return "Creato smallgroup {$this->formatTipo($tipo)} per {$created->count()} partecipanti il {$dataOra->format('d/m/Y H:i')}: {$nomi}.";
+        }
+
         $appuntamento = Appuntamento::create([
             'cliente_id' => $cliente->id,
             'abbonamento_id' => $abbonamento->id,
@@ -169,6 +205,15 @@ class TelegramCrmActionService
             return 'Nessuna modifica da applicare.';
         }
 
+        // SMALLGROUP: aggiorna tutti i collegati
+        if ($appuntamento->sessione_condivisa_uuid) {
+            Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                ->update($updates);
+
+            return "Sessione smallgroup aggiornata ({$appuntamento->sessione_condivisa_uuid}).";
+        }
+
         $appuntamento->update($updates);
 
         return "Appuntamento #{$appuntamento->id} modificato con successo.";
@@ -177,6 +222,22 @@ class TelegramCrmActionService
     protected function eliminaAppuntamentoContext(array $params): string
     {
         $appuntamento = $this->findSingleAppointmentOrFail($params);
+
+        // SMALLGROUP: elimina tutti i collegati
+        if ($appuntamento->sessione_condivisa_uuid) {
+            $count = Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                ->get()
+                ->count();
+
+            Appuntamento::query()
+                ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                ->get()
+                ->each
+                ->delete();
+
+            return "Eliminata sessione smallgroup con {$count} appuntamenti collegati.";
+        }
 
         $id = $appuntamento->id;
         $appuntamento->delete();
@@ -213,7 +274,7 @@ class TelegramCrmActionService
     {
         $pagamenti = Pagamento::query()
             ->with(['cliente', 'abbonamento.servizio'])
-            ->whereIn('stato', ['da_pagare', 'parziale'])
+            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
             ->orderBy('scadenza')
             ->get();
 
@@ -225,12 +286,12 @@ class TelegramCrmActionService
 
         foreach ($pagamenti as $pagamento) {
             $cliente = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
-            $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+            $abbonamentoNome = $pagamento->abbonamento?->servizio?->nome ?? '-';
             $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
             $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
             $stato = $pagamento->stato ?? '-';
 
-            $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamento} · € {$importo} · {$scadenza} · {$stato}";
+            $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamentoNome} · € {$importo} · {$scadenza} · {$stato}";
         }
 
         return implode("\n", $lines);
@@ -245,7 +306,7 @@ class TelegramCrmActionService
         $pagamenti = Pagamento::query()
             ->with(['abbonamento.servizio'])
             ->where('cliente_id', $cliente->id)
-            ->whereIn('stato', ['da_pagare', 'parziale'])
+            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
             ->orderBy('scadenza')
             ->get();
 
@@ -256,12 +317,12 @@ class TelegramCrmActionService
         $lines = ["Pagamenti di {$cliente->nome} {$cliente->cognome}:"];
 
         foreach ($pagamenti as $pagamento) {
-            $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+            $abbonamentoNome = $pagamento->abbonamento?->servizio?->nome ?? '-';
             $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
             $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
             $stato = $pagamento->stato ?? '-';
 
-            $lines[] = "#{$pagamento->id} · {$cliente->nome} {$cliente->cognome} · {$abbonamento} · € {$importo} · {$scadenza} · {$stato}";
+            $lines[] = "#{$pagamento->id} · {$cliente->nome} {$cliente->cognome} · {$abbonamentoNome} · € {$importo} · {$scadenza} · {$stato}";
         }
 
         return implode("\n", $lines);
@@ -379,12 +440,12 @@ class TelegramCrmActionService
                 $lines[] = 'Pagamenti non sincronizzati:';
                 foreach ($pagamenti as $pagamento) {
                     $cliente = trim(($pagamento->cliente?->nome ?? '') . ' ' . ($pagamento->cliente?->cognome ?? ''));
-                    $abbonamento = $pagamento->abbonamento?->servizio?->nome ?? '-';
+                    $abbonamentoNome = $pagamento->abbonamento?->servizio?->nome ?? '-';
                     $importo = number_format((float) ($pagamento->importo_previsto ?? 0), 2, ',', '.');
                     $scadenza = $pagamento->scadenza?->format('d/m/Y') ?? '-';
                     $statoSync = $pagamento->calendar_sync_status ?? 'null';
 
-                    $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamento} · € {$importo} · {$scadenza} · {$statoSync}";
+                    $lines[] = "#{$pagamento->id} · {$cliente} · {$abbonamentoNome} · € {$importo} · {$scadenza} · {$statoSync}";
                 }
             }
         } else {
@@ -415,13 +476,13 @@ class TelegramCrmActionService
 
         foreach ($abbonamenti as $abbonamento) {
             $cliente = trim(($abbonamento->cliente?->nome ?? '') . ' ' . ($abbonamento->cliente?->cognome ?? ''));
-            $servizio = $abbonamento->servizio?->nome ?? '-';
+            $servizioNome = $abbonamento->servizio?->nome ?? '-';
 
             try {
                 $this->aggiornaAbbonamentoMensile($abbonamento);
-                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizio} · aggiornato";
+                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizioNome} · aggiornato";
             } catch (\Throwable $e) {
-                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizio} · errore: {$e->getMessage()}";
+                $lines[] = "#{$abbonamento->id} · {$cliente} · {$servizioNome} · errore: {$e->getMessage()}";
             }
         }
 
@@ -442,12 +503,6 @@ class TelegramCrmActionService
         if (! str_contains($nomeServizio, 'mensile')) {
             return;
         }
-
-        // Placeholder sicuro.
-        // Qui puoi aggiungere la logica reale di:
-        // - conteggio appuntamenti del mese
-        // - aggiornamento importo pagamento
-        // - generazione rate/scadenze
     }
 
     protected function aggiornaImportoPersonalMensileSeNecessario(Cliente $cliente): void
@@ -465,8 +520,6 @@ class TelegramCrmActionService
         if (! str_contains($nomeServizio, 'personal mensile')) {
             return;
         }
-
-        // Placeholder sicuro.
     }
 
     protected function findSingleAppointmentOrFail(array $params): Appuntamento
@@ -529,12 +582,33 @@ class TelegramCrmActionService
         return $cliente;
     }
 
+    protected function isSmallGroupAbbonamento(?Abbonamento $abbonamento): bool
+    {
+        if (! $abbonamento || ! $abbonamento->servizio) {
+            return false;
+        }
+
+        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
+
+        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+    }
+
+    protected function getPartecipantiAbbonamento(Abbonamento $abbonamento): Collection
+    {
+        if (method_exists($abbonamento, 'clienti')) {
+            return $abbonamento->clienti()->get();
+        }
+
+        return collect();
+    }
+
     protected function normalizeNameString(string $value): string
     {
         $value = mb_strtolower(trim($value));
         $value = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
         $value = preg_replace('/[^a-z0-9\s]/', ' ', $value) ?? $value;
         $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
         return trim($value);
     }
 
