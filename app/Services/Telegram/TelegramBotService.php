@@ -11,6 +11,8 @@ class TelegramBotService
 {
     protected string $baseUrl;
 
+    protected int $maxMessageLength = 3500;
+
     public function __construct()
     {
         $token = (string) config('services.telegram.bot_token');
@@ -24,48 +26,55 @@ class TelegramBotService
 
     public function sendMessage(string $chatId, string $text, array $extra = []): array
     {
-        $payload = array_merge([
-            'chat_id' => $chatId,
-            'text' => $text,
-            'disable_web_page_preview' => true,
-        ], $extra);
+        $chunks = $this->splitMessage($text, $this->maxMessageLength);
+        $lastResponse = [];
 
-        try {
-            $response = Http::connectTimeout(15)
-                ->timeout(45)
-                ->retry(3, 1000)
-                ->post($this->baseUrl . '/sendMessage', $payload);
-        } catch (ConnectionException $e) {
+        foreach ($chunks as $index => $chunk) {
+            $payload = array_merge([
+                'chat_id' => $chatId,
+                'text' => $chunk,
+                'disable_web_page_preview' => true,
+            ], $extra);
+
+            try {
+                $response = Http::connectTimeout(15)
+                    ->timeout(45)
+                    ->retry(3, 1000)
+                    ->post($this->baseUrl . '/sendMessage', $payload);
+            } catch (ConnectionException $e) {
+                TelegramUpdate::create([
+                    'direction' => 'outbound',
+                    'kind' => 'message',
+                    'chat_id' => $chatId,
+                    'text' => $chunk,
+                    'payload' => $payload,
+                    'success' => false,
+                    'error' => $e->getMessage(),
+                    'handled_at' => now(),
+                ]);
+
+                throw new RuntimeException('Errore Telegram sendMessage: ' . $e->getMessage());
+            }
+
             TelegramUpdate::create([
                 'direction' => 'outbound',
                 'kind' => 'message',
                 'chat_id' => $chatId,
-                'text' => $text,
+                'text' => $chunk,
                 'payload' => $payload,
-                'success' => false,
-                'error' => $e->getMessage(),
+                'success' => $response->successful(),
+                'error' => $response->successful() ? null : $response->body(),
                 'handled_at' => now(),
             ]);
 
-            throw new RuntimeException('Errore Telegram sendMessage: ' . $e->getMessage());
+            if (! $response->successful()) {
+                throw new RuntimeException('Errore Telegram sendMessage: ' . $response->body());
+            }
+
+            $lastResponse = $response->json();
         }
 
-        TelegramUpdate::create([
-            'direction' => 'outbound',
-            'kind' => 'message',
-            'chat_id' => $chatId,
-            'text' => $text,
-            'payload' => $payload,
-            'success' => $response->successful(),
-            'error' => $response->successful() ? null : $response->body(),
-            'handled_at' => now(),
-        ]);
-
-        if (! $response->successful()) {
-            throw new RuntimeException('Errore Telegram sendMessage: ' . $response->body());
-        }
-
-        return $response->json();
+        return $lastResponse;
     }
 
     public function getMe(): array
@@ -94,5 +103,68 @@ class TelegramBotService
         }
 
         return $response->json();
+    }
+
+    protected function splitMessage(string $text, int $maxLength): array
+    {
+        $text = trim($text);
+
+        if (mb_strlen($text) <= $maxLength) {
+            return [$text];
+        }
+
+        $lines = preg_split("/\r\n|\n|\r/", $text) ?: [$text];
+        $chunks = [];
+        $current = '';
+
+        foreach ($lines as $line) {
+            $line = rtrim($line);
+
+            if ($current === '') {
+                if (mb_strlen($line) <= $maxLength) {
+                    $current = $line;
+                    continue;
+                }
+
+                $chunks = array_merge($chunks, $this->splitHard($line, $maxLength));
+                continue;
+            }
+
+            $candidate = $current . "\n" . $line;
+
+            if (mb_strlen($candidate) <= $maxLength) {
+                $current = $candidate;
+                continue;
+            }
+
+            $chunks[] = $current;
+
+            if (mb_strlen($line) <= $maxLength) {
+                $current = $line;
+            } else {
+                $chunks = array_merge($chunks, $this->splitHard($line, $maxLength));
+                $current = '';
+            }
+        }
+
+        if ($current !== '') {
+            $chunks[] = $current;
+        }
+
+        return $chunks;
+    }
+
+    protected function splitHard(string $text, int $maxLength): array
+    {
+        $chunks = [];
+        $length = mb_strlen($text);
+        $start = 0;
+
+        while ($start < $length) {
+            $chunks[] = mb_substr($text, $start, $maxLength);
+            $start += $maxLength;
+        }
+
+        return $chunks;
     }
 }
