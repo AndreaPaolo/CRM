@@ -3,9 +3,11 @@
 namespace App\Filament\Resources\Appuntamentos\Pages;
 
 use App\Filament\Resources\Appuntamentos\AppuntamentoResource;
+use App\Models\Abbonamento;
 use App\Models\Appuntamento;
 use Carbon\Carbon;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class CreateAppuntamento extends CreateRecord
@@ -14,10 +16,8 @@ class CreateAppuntamento extends CreateRecord
 
     protected array $partecipantiSelezionati = [];
 
-    public function mount(): void
+    protected function afterFill(): void
     {
-        parent::mount();
-
         $data = [];
 
         if (request()->filled('cliente_id')) {
@@ -41,7 +41,6 @@ class CreateAppuntamento extends CreateRecord
     protected function mutateFormDataBeforeCreate(array $data): array
     {
         $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
-
         unset($data['clienti']);
 
         return $this->normalizeEventDateData($data);
@@ -49,27 +48,26 @@ class CreateAppuntamento extends CreateRecord
 
     protected function handleRecordCreation(array $data): Appuntamento
     {
-        $partecipanti = collect($this->partecipantiSelezionati);
+        $abbonamento = Abbonamento::query()
+            ->with(['servizio', 'clienti'])
+            ->find($data['abbonamento_id']);
 
-        if (! empty($data['cliente_id'])) {
-            $partecipanti->prepend((int) $data['cliente_id']);
+        $isSmallGroup = $this->isSmallGroupAbbonamento($abbonamento);
+
+        if (! $isSmallGroup) {
+            return Appuntamento::create($data);
         }
 
-        $partecipanti = $partecipanti
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
+        $partecipanti = $this->buildPartecipantiSmallGroup($abbonamento, $data['cliente_id'] ?? null, $this->partecipantiSelezionati);
 
-        if (empty($partecipanti) && ! empty($data['cliente_id'])) {
-            $partecipanti = [(int) $data['cliente_id']];
+        if ($partecipanti->isEmpty()) {
+            return Appuntamento::create($data);
         }
 
-        $uuidSessione = count($partecipanti) > 1 ? (string) Str::uuid() : null;
-
+        $uuidSessione = (string) Str::uuid();
         $recordPrincipale = null;
 
-        foreach ($partecipanti as $index => $clienteId) {
+        foreach ($partecipanti->values() as $index => $clienteId) {
             $payload = $data;
             $payload['cliente_id'] = $clienteId;
             $payload['sessione_condivisa_uuid'] = $uuidSessione;
@@ -81,7 +79,7 @@ class CreateAppuntamento extends CreateRecord
             }
         }
 
-        return $recordPrincipale;
+        return $recordPrincipale ?? Appuntamento::create($data);
     }
 
     protected function normalizeEventDateData(array $data): array
@@ -110,5 +108,40 @@ class CreateAppuntamento extends CreateRecord
         unset($data['data_evento']);
 
         return $data;
+    }
+
+    protected function isSmallGroupAbbonamento(?Abbonamento $abbonamento): bool
+    {
+        if (! $abbonamento || ! $abbonamento->servizio) {
+            return false;
+        }
+
+        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
+
+        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+    }
+
+    protected function buildPartecipantiSmallGroup(?Abbonamento $abbonamento, ?int $clientePrincipaleId, array $selezionati): Collection
+    {
+        $idsAbilitati = collect($abbonamento?->clienti?->pluck('id')->all() ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->values();
+
+        $partecipanti = collect($selezionati)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->when($idsAbilitati->isNotEmpty(), fn (Collection $c) => $c->intersect($idsAbilitati))
+            ->values();
+
+        if ($clientePrincipaleId) {
+            $clientePrincipaleId = (int) $clientePrincipaleId;
+
+            if ($idsAbilitati->isEmpty() || $idsAbilitati->contains($clientePrincipaleId)) {
+                $partecipanti->prepend($clientePrincipaleId);
+            }
+        }
+
+        return $partecipanti->filter()->unique()->values();
     }
 }

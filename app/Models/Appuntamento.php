@@ -103,6 +103,28 @@ class Appuntamento extends Model
             }
         });
 
+        static::deleting(function (Appuntamento $appuntamento) 
+        {
+            static $isCascading = false;
+
+            if ($isCascading) {
+                return;
+            }
+
+            if ($appuntamento->sessione_condivisa_uuid) {
+                $isCascading = true;
+
+                Appuntamento::query()
+                    ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
+                    ->where('id', '!=', $appuntamento->id)
+                    ->get()
+                    ->each
+                    ->delete();
+
+                $isCascading = false;
+            }
+        });
+
         static::deleted(function (Appuntamento $appuntamento) {
             try {
                 app(\App\Services\GoogleCalendarService::class)->deleteAppuntamento($appuntamento);

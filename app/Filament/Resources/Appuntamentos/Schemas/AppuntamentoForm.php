@@ -84,11 +84,49 @@ class AppuntamentoForm
 
                 Select::make('clienti')
                     ->label('Partecipanti')
-                    ->relationship('clienti', 'nome')
                     ->multiple()
-                    ->preload()
                     ->searchable()
-                    ->getOptionLabelFromRecordUsing(fn ($record) => $record->nome . ' ' . $record->cognome),
+                    ->preload()
+                    ->visible(function (callable $get) {
+                        $abbonamentoId = $get('abbonamento_id');
+
+                        if (! $abbonamentoId) {
+                            return false;
+                        }
+
+                        $abbonamento = \App\Models\Abbonamento::query()
+                            ->with('servizio')
+                            ->find($abbonamentoId);
+
+                        if (! $abbonamento || ! $abbonamento->servizio) {
+                            return false;
+                        }
+
+                        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
+
+                        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+                    })
+                    ->options(function (callable $get) {
+                        $abbonamentoId = $get('abbonamento_id');
+
+                        if (! $abbonamentoId) {
+                            return [];
+                        }
+
+                        $abbonamento = \App\Models\Abbonamento::query()
+                            ->with('clienti')
+                            ->find($abbonamentoId);
+
+                        if (! $abbonamento) {
+                            return [];
+                        }
+
+                        return $abbonamento->clienti
+                            ->mapWithKeys(fn ($cliente) => [
+                                $cliente->id => trim(($cliente->nome ?? '') . ' ' . ($cliente->cognome ?? '')),
+                            ])
+                            ->toArray();
+                    }),
 
                 Select::make('tipo_appuntamento')
                     ->label('Tipo appuntamento')
