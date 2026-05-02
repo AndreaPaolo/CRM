@@ -213,7 +213,7 @@ class TelegramCrmActionService
     {
         $pagamenti = Pagamento::query()
             ->with(['cliente', 'abbonamento.servizio'])
-            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
+            ->whereIn('stato', ['da_pagare', 'parziale'])
             ->orderBy('scadenza')
             ->get();
 
@@ -245,7 +245,7 @@ class TelegramCrmActionService
         $pagamenti = Pagamento::query()
             ->with(['abbonamento.servizio'])
             ->where('cliente_id', $cliente->id)
-            ->whereIn('stato', ['da_pagare', 'parziale', 'pagato'])
+            ->whereIn('stato', ['da_pagare', 'parziale'])
             ->orderBy('scadenza')
             ->get();
 
