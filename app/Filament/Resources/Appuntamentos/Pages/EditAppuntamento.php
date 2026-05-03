@@ -15,29 +15,14 @@ class EditAppuntamento extends EditRecord
 {
     protected static string $resource = AppuntamentoResource::class;
 
-    protected array $partecipantiSelezionati = [];
-
     protected function afterFill(): void
     {
         $appuntamento = $this->record->fresh(['abbonamento.clienti']);
-
-        $altriPartecipanti = [];
-
-        if ($appuntamento->sessione_condivisa_uuid) {
-            $altriPartecipanti = Appuntamento::query()
-                ->where('sessione_condivisa_uuid', $appuntamento->sessione_condivisa_uuid)
-                ->where('id', '!=', $appuntamento->id)
-                ->pluck('cliente_id')
-                ->map(fn ($id) => (int) $id)
-                ->values()
-                ->all();
-        }
 
         $this->form->fill([
             ...$this->record->attributesToArray(),
             'cliente_id' => $appuntamento->cliente_id,
             'abbonamento_id' => $appuntamento->abbonamento_id,
-            'clienti' => $altriPartecipanti,
             'data_evento' => $appuntamento->evento_intera_giornata && $appuntamento->data_ora
                 ? $appuntamento->data_ora->format('Y-m-d')
                 : null,
@@ -69,9 +54,6 @@ class EditAppuntamento extends EditRecord
 
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
-        unset($data['clienti']);
-
         return $this->normalizeEventDateData($data);
     }
 
@@ -81,9 +63,9 @@ class EditAppuntamento extends EditRecord
             ->with(['servizio', 'clienti'])
             ->find($data['abbonamento_id']);
 
-        $isSmallGroup = $this->isSmallGroupAbbonamento($abbonamento);
+        $isGruppo = $this->isAbbonamentoGruppo($abbonamento);
 
-        if (! $isSmallGroup) {
+        if (! $isGruppo) {
             if ($record->sessione_condivisa_uuid) {
                 Appuntamento::query()
                     ->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid)
@@ -110,7 +92,10 @@ class EditAppuntamento extends EditRecord
             return $record->fresh();
         }
 
-        $partecipanti = $this->buildPartecipantiSmallGroup($abbonamento, $data['cliente_id'] ?? null, $this->partecipantiSelezionati);
+        $partecipanti = $this->buildPartecipantiGruppo(
+            $abbonamento,
+            $data['cliente_id'] ?? null
+        );
 
         if ($partecipanti->count() <= 1) {
             if ($record->sessione_condivisa_uuid) {
@@ -142,7 +127,7 @@ class EditAppuntamento extends EditRecord
         $uuid = $record->sessione_condivisa_uuid ?: (string) Str::uuid();
 
         Appuntamento::query()
-            ->where(function ($query) use ($record, $uuid) {
+            ->where(function ($query) use ($record) {
                 if ($record->sessione_condivisa_uuid) {
                     $query->where('sessione_condivisa_uuid', $record->sessione_condivisa_uuid);
                 } else {
@@ -199,15 +184,6 @@ class EditAppuntamento extends EditRecord
                 ->delete();
         }
 
-        $principaleId = $partecipanti->first();
-
-        if ($principaleId) {
-            Appuntamento::query()
-                ->where('sessione_condivisa_uuid', $uuid)
-                ->where('cliente_id', $principaleId)
-                ->update(['id' => \DB::raw('id')]);
-        }
-
         return Appuntamento::query()->find($record->id)?->fresh() ?? $record->fresh();
     }
 
@@ -256,38 +232,31 @@ class EditAppuntamento extends EditRecord
         return $data;
     }
 
-    protected function isSmallGroupAbbonamento(?Abbonamento $abbonamento): bool
+    protected function isAbbonamentoGruppo(?Abbonamento $abbonamento): bool
     {
-        if (! $abbonamento || ! $abbonamento->servizio) {
+        if (! $abbonamento) {
             return false;
         }
 
-        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
-
-        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+        return mb_strtolower((string) $abbonamento->tipo_partecipazione) === 'gruppo';
     }
 
-    protected function buildPartecipantiSmallGroup(?Abbonamento $abbonamento, ?int $clientePrincipaleId, array $selezionati): Collection
+    protected function buildPartecipantiGruppo(?Abbonamento $abbonamento, ?int $clientePrincipaleId): Collection
     {
-        $idsAbilitati = collect($abbonamento?->clienti?->pluck('id')->all() ?? [])
-            ->map(fn ($id) => (int) $id)
-            ->filter()
-            ->values();
-
-        $partecipanti = collect($selezionati)
-            ->map(fn ($id) => (int) $id)
-            ->filter()
-            ->when($idsAbilitati->isNotEmpty(), fn (Collection $c) => $c->intersect($idsAbilitati))
-            ->values();
+        $partecipanti = collect();
 
         if ($clientePrincipaleId) {
-            $clientePrincipaleId = (int) $clientePrincipaleId;
-
-            if ($idsAbilitati->isEmpty() || $idsAbilitati->contains($clientePrincipaleId)) {
-                $partecipanti->prepend($clientePrincipaleId);
-            }
+            $partecipanti->push((int) $clientePrincipaleId);
         }
 
-        return $partecipanti->filter()->unique()->values();
+        $altriPartecipanti = collect($abbonamento?->clienti?->pluck('id')->all() ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter();
+
+        return $partecipanti
+            ->merge($altriPartecipanti)
+            ->filter()
+            ->unique()
+            ->values();
     }
 }

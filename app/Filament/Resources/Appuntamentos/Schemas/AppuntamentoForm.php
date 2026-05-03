@@ -34,7 +34,6 @@ class AppuntamentoForm
                     ->live()
                     ->afterStateUpdated(function (callable $set) {
                         $set('abbonamento_id', null);
-                        $set('clienti', []);
                         $set('tipo_appuntamento', 'personal');
                         $set('evento_intera_giornata', false);
                         $set('durata', 60);
@@ -66,11 +65,13 @@ class AppuntamentoForm
                                 $servizio = $abbonamento->servizio?->nome ?? 'Servizio';
                                 $data = optional($abbonamento->data_inizio)->format('d/m/Y');
                                 $stato = $abbonamento->terminato ? 'terminato' : 'attivo';
+                                $partecipazione = $abbonamento->tipo_partecipazione ?? '-';
 
                                 return [
-                                    $abbonamento->id => "{$servizio} | dal {$data} | {$stato}",
+                                    $abbonamento->id => "{$servizio} | {$partecipazione} | dal {$data} | {$stato}",
                                 ];
-                            });
+                            })
+                            ->toArray();
                     })
                     ->searchable()
                     ->preload()
@@ -82,11 +83,8 @@ class AppuntamentoForm
                         self::applyDefaultsFromAbbonamento($state, $set, $get);
                     }),
 
-                Select::make('clienti')
+                Placeholder::make('partecipanti_gruppo')
                     ->label('Partecipanti')
-                    ->multiple()
-                    ->searchable()
-                    ->preload()
                     ->visible(function (callable $get) {
                         $abbonamentoId = $get('abbonamento_id');
 
@@ -94,39 +92,40 @@ class AppuntamentoForm
                             return false;
                         }
 
-                        $abbonamento = \App\Models\Abbonamento::query()
-                            ->with('servizio')
+                        $abbonamento = Abbonamento::query()
                             ->find($abbonamentoId);
 
-                        if (! $abbonamento || ! $abbonamento->servizio) {
-                            return false;
-                        }
-
-                        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
-
-                        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+                        return self::isAbbonamentoGruppo($abbonamento);
                     })
-                    ->options(function (callable $get) {
+                    ->content(function (callable $get) {
                         $abbonamentoId = $get('abbonamento_id');
+                        $clienteId = $get('cliente_id');
 
                         if (! $abbonamentoId) {
-                            return [];
+                            return 'Nessun partecipante';
                         }
 
-                        $abbonamento = \App\Models\Abbonamento::query()
+                        $abbonamento = Abbonamento::query()
                             ->with('clienti')
                             ->find($abbonamentoId);
 
                         if (! $abbonamento) {
-                            return [];
+                            return 'Nessun partecipante';
                         }
 
-                        return $abbonamento->clienti
-                            ->mapWithKeys(fn ($cliente) => [
-                                $cliente->id => trim(($cliente->nome ?? '') . ' ' . ($cliente->cognome ?? '')),
-                            ])
-                            ->toArray();
-                    }),
+                        $nomi = $abbonamento->clienti
+                            ->filter(fn ($cliente) => (int) $cliente->id !== (int) $clienteId)
+                            ->map(fn ($cliente) => trim(($cliente->nome ?? '') . ' ' . ($cliente->cognome ?? '')))
+                            ->filter()
+                            ->values();
+
+                        if ($nomi->isEmpty()) {
+                            return 'Nessun altro partecipante';
+                        }
+
+                        return $nomi->implode(', ');
+                    })
+                    ->helperText('I partecipanti vengono letti automaticamente dall’abbonamento di gruppo.'),
 
                 Select::make('tipo_appuntamento')
                     ->label('Tipo appuntamento')
@@ -250,7 +249,7 @@ class AppuntamentoForm
             return;
         }
 
-        $abbonamento = Abbonamento::with('servizio')->find($abbonamentoId);
+        $abbonamento = Abbonamento::with(['servizio', 'clienti'])->find($abbonamentoId);
         $servizio = $abbonamento?->servizio;
 
         if (! $servizio) {
@@ -271,5 +270,14 @@ class AppuntamentoForm
             $set('evento_intera_giornata', false);
             $set('durata', 60);
         }
+    }
+
+    protected static function isAbbonamentoGruppo(?Abbonamento $abbonamento): bool
+    {
+        if (! $abbonamento) {
+            return false;
+        }
+
+        return mb_strtolower((string) $abbonamento->tipo_partecipazione) === 'gruppo';
     }
 }

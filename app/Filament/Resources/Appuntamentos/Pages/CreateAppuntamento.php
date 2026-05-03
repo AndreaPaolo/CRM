@@ -14,8 +14,6 @@ class CreateAppuntamento extends CreateRecord
 {
     protected static string $resource = AppuntamentoResource::class;
 
-    protected array $partecipantiSelezionati = [];
-
     protected function afterFill(): void
     {
         $data = [];
@@ -28,11 +26,6 @@ class CreateAppuntamento extends CreateRecord
             $data['abbonamento_id'] = (int) request()->integer('abbonamento_id');
         }
 
-        $clienti = request()->query('clienti');
-        if (is_array($clienti)) {
-            $data['clienti'] = array_map('intval', $clienti);
-        }
-
         if (! empty($data)) {
             $this->form->fill($data);
         }
@@ -40,9 +33,6 @@ class CreateAppuntamento extends CreateRecord
 
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $this->partecipantiSelezionati = array_map('intval', $data['clienti'] ?? []);
-        unset($data['clienti']);
-
         return $this->normalizeEventDateData($data);
     }
 
@@ -52,13 +42,16 @@ class CreateAppuntamento extends CreateRecord
             ->with(['servizio', 'clienti'])
             ->find($data['abbonamento_id']);
 
-        $isSmallGroup = $this->isSmallGroupAbbonamento($abbonamento);
+        $isGruppo = $this->isAbbonamentoGruppo($abbonamento);
 
-        if (! $isSmallGroup) {
+        if (! $isGruppo) {
             return Appuntamento::create($data);
         }
 
-        $partecipanti = $this->buildPartecipantiSmallGroup($abbonamento, $data['cliente_id'] ?? null, $this->partecipantiSelezionati);
+        $partecipanti = $this->buildPartecipantiGruppo(
+            $abbonamento,
+            $data['cliente_id'] ?? null
+        );
 
         if ($partecipanti->isEmpty()) {
             return Appuntamento::create($data);
@@ -110,38 +103,31 @@ class CreateAppuntamento extends CreateRecord
         return $data;
     }
 
-    protected function isSmallGroupAbbonamento(?Abbonamento $abbonamento): bool
+    protected function isAbbonamentoGruppo(?Abbonamento $abbonamento): bool
     {
-        if (! $abbonamento || ! $abbonamento->servizio) {
+        if (! $abbonamento) {
             return false;
         }
 
-        $nome = mb_strtolower((string) $abbonamento->servizio->nome);
-
-        return str_contains($nome, 'smallgroup') || str_contains($nome, 'small group');
+        return mb_strtolower((string) $abbonamento->tipo_partecipazione) === 'gruppo';
     }
 
-    protected function buildPartecipantiSmallGroup(?Abbonamento $abbonamento, ?int $clientePrincipaleId, array $selezionati): Collection
+    protected function buildPartecipantiGruppo(?Abbonamento $abbonamento, ?int $clientePrincipaleId): Collection
     {
-        $idsAbilitati = collect($abbonamento?->clienti?->pluck('id')->all() ?? [])
-            ->map(fn ($id) => (int) $id)
-            ->filter()
-            ->values();
-
-        $partecipanti = collect($selezionati)
-            ->map(fn ($id) => (int) $id)
-            ->filter()
-            ->when($idsAbilitati->isNotEmpty(), fn (Collection $c) => $c->intersect($idsAbilitati))
-            ->values();
+        $partecipanti = collect();
 
         if ($clientePrincipaleId) {
-            $clientePrincipaleId = (int) $clientePrincipaleId;
-
-            if ($idsAbilitati->isEmpty() || $idsAbilitati->contains($clientePrincipaleId)) {
-                $partecipanti->prepend($clientePrincipaleId);
-            }
+            $partecipanti->push((int) $clientePrincipaleId);
         }
 
-        return $partecipanti->filter()->unique()->values();
+        $altriPartecipanti = collect($abbonamento?->clienti?->pluck('id')->all() ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter();
+
+        return $partecipanti
+            ->merge($altriPartecipanti)
+            ->filter()
+            ->unique()
+            ->values();
     }
 }
