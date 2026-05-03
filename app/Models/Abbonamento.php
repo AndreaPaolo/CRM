@@ -11,6 +11,8 @@ class Abbonamento extends Model
 {
     use SoftDeletes;
 
+    protected $table = 'abbonamenti';
+
     protected $fillable = [
         'servizio_id',
         'cliente_id',
