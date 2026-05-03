@@ -2,26 +2,25 @@
 
 namespace App\Models;
 
+use App\Services\GoogleCalendarService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Carbon;
 
 class Abbonamento extends Model
 {
     use SoftDeletes;
 
-    protected $table = 'abbonamenti';
-
     protected $fillable = [
         'servizio_id',
         'cliente_id',
-        'tipo_partecipazione',
         'prezzo',
         'rate',
         'data_inizio',
         'data_fine',
         'terminato',
         'terminato_manualmente',
+        'tipo_partecipazione',
     ];
 
     protected $casts = [
@@ -57,6 +56,11 @@ class Abbonamento extends Model
         return $this->hasMany(Appuntamento::class);
     }
 
+    public function pagamenti()
+    {
+        return $this->hasMany(Pagamento::class);
+    }
+
     protected static function booted(): void
     {
         static::saved(function (Abbonamento $abbonamento) {
@@ -84,7 +88,7 @@ class Abbonamento extends Model
         static::deleting(function (Abbonamento $abbonamento) {
             $abbonamento->loadMissing(['appuntamenti.cliente']);
 
-            $service = app(\App\Services\GoogleCalendarService::class);
+            $service = app(GoogleCalendarService::class);
 
             foreach ($abbonamento->appuntamenti as $appuntamento) {
                 try {
@@ -142,26 +146,42 @@ class Abbonamento extends Model
     public function aggiornaNumerazioneAppuntamenti(): void
     {
         $appuntamenti = $this->appuntamenti()
+            ->where('tipo_appuntamento', 'personal')
             ->orderBy('data_ora')
             ->orderBy('id')
             ->get();
 
         $counterPersonal = 0;
+        $sessioniNumerate = [];
 
         foreach ($appuntamenti as $appuntamento) {
-            $nuovaNumerazione = null;
+            $groupKey = $appuntamento->sessione_condivisa_uuid
+                ? 'session:' . $appuntamento->sessione_condivisa_uuid
+                : 'single:' . $appuntamento->id;
 
-            if (($appuntamento->tipo_appuntamento ?? 'personal') === 'personal') {
+            if (! array_key_exists($groupKey, $sessioniNumerate)) {
                 $counterPersonal++;
-                $nuovaNumerazione = $counterPersonal;
+                $sessioniNumerate[$groupKey] = $counterPersonal;
             }
 
-            if ($appuntamento->numerazione !== $nuovaNumerazione) {
+            $nuovaNumerazione = $sessioniNumerate[$groupKey];
+
+            if ((int) $appuntamento->numerazione !== $nuovaNumerazione) {
                 $appuntamento->updateQuietly([
                     'numerazione' => $nuovaNumerazione,
                 ]);
             }
         }
+
+        $this->appuntamenti()
+            ->where('tipo_appuntamento', '!=', 'personal')
+            ->whereNotNull('numerazione')
+            ->get()
+            ->each(function (Appuntamento $appuntamento) {
+                $appuntamento->updateQuietly([
+                    'numerazione' => null,
+                ]);
+            });
     }
 
     public function sincronizzaAppuntamentiSuGoogle(): void
@@ -174,7 +194,7 @@ class Abbonamento extends Model
 
         foreach ($appuntamenti as $appuntamento) {
             try {
-                app(\App\Services\GoogleCalendarService::class)
+                app(GoogleCalendarService::class)
                     ->syncAppuntamento(
                         $appuntamento->fresh(['cliente', 'abbonamento.servizio', 'pt'])
                     );
@@ -183,10 +203,4 @@ class Abbonamento extends Model
             }
         }
     }
-
-    public function pagamenti()
-    {
-        return $this->hasMany(\App\Models\Pagamento::class);
-    }
-
 }
